@@ -1,0 +1,133 @@
+{% extends "astrodash/base.html" %}
+{% load crispy_forms_tags %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <!-- Sidebar: Input Form -->
+        <div class="col-md-3">
+            <div class="card shadow-sm">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0">Input Parameters</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post" enctype="multipart/form-data">
+                        {% csrf_token %}
+
+                        <div class="form-group">
+                            {{ form.supernova_name|as_crispy_field }}
+                        </div>
+
+                        <div class="text-center my-2 font-weight-bold text-muted">- OR -</div>
+
+                        <div class="form-group">
+                            {{ form.file|as_crispy_field }}
+                        </div>
+
+                        <hr>
+
+                        <div class="form-group">
+                            {{ form.model|as_crispy_field }}
+                        </div>
+                        <div class="form-group">
+                            {{ form.smoothing|as_crispy_field }}
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group col-md-6">
+                                {{ form.min_wave|as_crispy_field }}
+                            </div>
+                            <div class="form-group col-md-6">
+                                {{ form.max_wave|as_crispy_field }}
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            {{ form.known_z|as_crispy_field }}
+                        </div>
+                        <div class="form-group">
+                            {{ form.redshift|as_crispy_field }}
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button type="submit" class="btn btn-primary flex-grow-1 mr-2">Classify</button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="clearForm()">Clear</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content: Results & Plot -->
+        <div class="col-md-9">
+            {% if success %}
+            <div class="card mb-4 shadow-sm">
+                <div class="card-header">
+                    <h4 class="mb-0">Spectrum Analysis</h4>
+                </div>
+                <div class="card-body">
+                    <!-- Bokeh Plot Container -->
+                    <div id="plot-container">
+                        {{ plot_div|safe }}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Classification Results -->
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <h5 class="mb-0">Best Matches</h5>
+                </div>
+                <div class="card-body">
+                    <p><strong>Model Used:</strong> {{ model_type }}</p>
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th>SN Type</th>
+                                <th>Age</th>
+                                <th>Probability</th>
+                                <th>Redshift</th>
+                                <th>Reliable</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for match in results.best_matches %}
+                            <tr>
+                                <td><span class="badge badge-info">{{ match.type }}</span></td>
+                                <td>{{ match.age }}</td>
+                                <td>{{ match.formatted_probability }}</td>
+                                <td>{{ match.redshift|default:"-" }}</td>
+                                <td>
+                                    {% if match.reliable %}
+                                    <span class="badge badge-success">Yes</span>
+                                    {% else %}
+                                    <span class="badge badge-warning">No</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% else %}
+            <div class="alert alert-info" role="alert">
+                <h4 class="alert-heading">Welcome!</h4>
+                <p>Use the form on the left to upload a spectrum file and start classification.</p>
+                <hr>
+                <p class="mb-0">Supported formats: single-column or two-column text files.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{{ plot_script|safe }}
+
+<script>
+    function clearForm() {
+        // Reloading the page via GET request is the cleanest way to:
+        // 1. Reset all form inputs to their factory defaults (clearing user entries like Redshift).
+        // 2. Clear the rendered plot and results (since the context will be empty).
+        window.location.href = window.location.pathname;
+    }
+</script>
+{% endblock %}

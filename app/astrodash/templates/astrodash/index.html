@@ -1,0 +1,50 @@
+{% extends "astrodash/base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="jumbotron text-center mt-4" style="background: transparent;">
+    <!-- Cosmic Title Simulation -->
+    <h1 class="display-4"
+        style="background: linear-gradient(90deg, #b3baff 0%, #fbc2eb 100%); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; text-shadow: 0 2px 16px #2a2a4a;">
+        Astrodash
+    </h1>
+    <p class="lead text-muted">Deep learning for Supernova classification.</p>
+    <hr class="my-4">
+    <p>Upload your spectra and get instant classification results using our advanced models.</p>
+    <div class="d-flex justify-content-center gap-3">
+        <a class="btn btn-primary btn-lg mr-2" href="{% url 'astrodash:classify' %}" role="button">Classify Spectrum</a>
+        <a class="btn btn-secondary btn-lg" href="{% url 'astrodash:batch_process_ui' %}" role="button">Batch
+            Processing</a>
+    </div>
+</div>
+
+<div class="container text-center">
+    <!-- Place holder for some nice graphics or info cards -->
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card mb-4 shadow-sm" style="background-color: rgba(255,255,255,0.9);">
+                <div class="card-body">
+                    <h5 class="card-title">Deep Learning</h5>
+                    <p class="card-text">Utilizes state-of-the-art deep learning models for accurate classification.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mb-4 shadow-sm" style="background-color: rgba(255,255,255,0.9);">
+                <div class="card-body">
+                    <h5 class="card-title">Interactive Plots</h5>
+                    <p class="card-text">Visualize your spectrum alongside template matches with interactive tools.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mb-4 shadow-sm" style="background-color: rgba(255,255,255,0.9);">
+                <div class="card-body">
+                    <h5 class="card-title">Fast & Easy</h5>
+                    <p class="card-text">Get results in seconds. Supports single file and batch uploads.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

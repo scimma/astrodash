@@ -1,0 +1,162 @@
+{% extends "astrodash/base.html" %}
+{% load crispy_forms_tags %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Batch Processing</h2>
+        <a href="{% url 'astrodash:landing_page' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Home
+        </a>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Run Batch Classification</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Upload spectrum files to classify them in bulk. You can upload a single ZIP
+                        file containing spectra OR select multiple individual files.</p>
+                    <form method="post" enctype="multipart/form-data">
+                        {% csrf_token %}
+
+                        <div class="row">
+                            <div class="col-md-12 mb-3">
+                                {{ form.files|as_crispy_field }}
+                            </div>
+                            <div class="col-md-12 mb-3">
+                                <div class="text-center text-muted">- OR -</div>
+                            </div>
+                            <div class="col-md-12 mb-3">
+                                {{ form.zip_file|as_crispy_field }}
+                            </div>
+                        </div>
+
+                        <hr>
+                        <h6 class="mb-3">Analysis Options</h6>
+                        <div class="row">
+                            <div class="col-md-6">
+                                {{ form.model|as_crispy_field }}
+                            </div>
+                            <div class="col-md-6">
+                                {{ form.smoothing|as_crispy_field }}
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                {{ form.min_wave|as_crispy_field }}
+                            </div>
+                            <div class="col-md-6">
+                                {{ form.max_wave|as_crispy_field }}
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4">
+                                {{ form.known_z|as_crispy_field }}
+                            </div>
+                            <div class="col-md-4">
+                                {{ form.redshift|as_crispy_field }}
+                            </div>
+                            <div class="col-md-4">
+                                {{ form.calculate_rlap|as_crispy_field }}
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-block mt-3">
+                            <i class="bi bi-play-fill"></i> Run Batch Classification
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if results %}
+    <div class="row mt-5 mb-5">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4>Results</h4>
+                <button id="download-csv-btn" class="btn btn-success">
+                    <i class="bi bi-file-earmark-spreadsheet"></i> Download CSV
+                </button>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-striped table-hover table-bordered">
+                    <thead class="thead-dark">
+                        <tr>
+                            <th>File Name</th>
+                            <th>Status</th>
+                            <th>Best Match Type</th>
+                            <th>Best Match Age</th>
+                            <th>Probability</th>
+                            <th>RLAP</th>
+                            <th>Redshift</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for filename, result in results.items %}
+                        <tr>
+                            <td>{{ filename }}</td>
+                            <td>
+                                {% if result.error %}
+                                <span class="badge badge-danger">Error</span>
+                                {% else %}
+                                <span class="badge badge-success">Success</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ result.type }}</td>
+                            <td>{{ result.age }}</td>
+                            <td>{{ result.probability }}</td>
+                            <td>{{ result.rlap }}</td>
+                            <td>{{ result.redshift }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data for CSV Export -->
+    {{ results|json_script:"batch-results-data" }}
+
+    <script>
+        document.getElementById('download-csv-btn').addEventListener('click', function () {
+            const resultsData = JSON.parse(document.getElementById('batch-results-data').textContent);
+
+            const headers = [
+                'File Name', 'Status', 'Best Match Type', 'Best Match Age', 'Probability', 'RLAP', 'Redshift'
+            ];
+
+            const rows = [headers];
+
+            for (const [filename, result] of Object.entries(resultsData)) {
+                const status = result.error ? 'Error' : 'Success';
+                const row = [
+                    `"${filename}"`,
+                    `"${status}"`,
+                    `"${result.type || ''}"`,
+                    `"${result.age || ''}"`,
+                    `"${result.probability || ''}"`,
+                    `"${result.rlap || ''}"`,
+                    `"${result.redshift || ''}"`
+                ];
+                rows.push(row.join(','));
+            }
+
+            const csvContent = "data:text/csv;charset=utf-8," + rows.join("\n");
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `batch_results_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link); // Required for FF
+            link.click();
+            document.body.removeChild(link);
+        });
+    </script>
+    {% endif %}
+</div>
+{% endblock %}

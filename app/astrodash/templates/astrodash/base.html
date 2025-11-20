@@ -1,0 +1,21 @@
+{% extends "host/base.html" %}
+{% load static %}
+
+{% block title %}Astrodash{% endblock %}
+
+{% block body %}
+<div class="astrodash-wrapper">
+    <!-- Astrodash Sub-navigation or Header could go here if needed -->
+    {% block content %}
+    {% endblock %}
+</div>
+{% endblock %}
+
+{% block script %}
+<!-- Include Bokeh Scripts if needed generally, or leave for specific blocks -->
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-3.3.0.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.3.0.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-tables-3.3.0.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-api-3.3.0.min.js"></script>
+{% block extra_scripts %}{% endblock %}
+{% endblock %}
