@@ -1,7 +1,7 @@
 from django.contrib.auth.context_processors import auth
 import base64
 import binascii
-from host.log import get_logger
+from astrodash.shared.log import get_logger
 logger = get_logger(__name__)
 
 
@@ -36,7 +36,5 @@ def user_profile(request):
             break
     context = {
         'username_b64decoded': username_b64decoded,
-        'has_perm_retrigger_transient': check_perms(user, "host.retrigger_transient"),
-        'has_perm_reprocess_transient': check_perms(user, "host.reprocess_transient"),
     }
     return context

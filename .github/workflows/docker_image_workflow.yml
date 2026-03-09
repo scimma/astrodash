@@ -28,7 +28,7 @@ jobs:
       - name: Prepare
         id: prep
         run: |
-          DOCKER_IMAGE=registry.gitlab.com/ncsa-blast/kubernetes/blast
+          DOCKER_IMAGE=astrodash
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
             TAGS="${DOCKER_IMAGE}:${VERSION},${DOCKER_IMAGE}:latest"
@@ -41,14 +41,6 @@ jobs:
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Login to container registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: "registry.gitlab.com"
-          username: "${{ secrets.GITLAB_REGISTRY_USERNAME }}"
-          password: "${{ secrets.GITLAB_REGISTRY_TOKEN }}"
 
       - name: Build and export to Docker
         id: docker_build
@@ -64,7 +56,7 @@ jobs:
           load: true
 
       - name: Run tests
-        run: bash run/blastctl ci up
+        run: bash run/astrodashctl ci up
 
       # - uses: codecov/codecov-action@v4
       #   with:

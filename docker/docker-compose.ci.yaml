@@ -1,14 +1,14 @@
-name: blast-ci
+name: astrodash-ci
 
 networks:
   internal:
     external: false
 
 volumes:
-  blast-db: {}
+  astrodash-db: {}
   django-static: {}
-  blast-data:
-    name: "blast-data"
+  astrodash-data:
+    name: "astrodash-data"
     external: true
 
 services:

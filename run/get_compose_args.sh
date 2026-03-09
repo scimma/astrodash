@@ -39,12 +39,12 @@ case "${PURGE_OPTION}" in
   ;;
   "--purge-db")
     COMPOSE_ARGS=""
-    PURGE_VOLUMES="${COMPOSE_PROJECT_NAME:-blast}_blast-db ${COMPOSE_PROJECT_NAME:-blast}_django-static"
+    PURGE_VOLUMES="${COMPOSE_PROJECT_NAME:-astrodash}_astrodash-db ${COMPOSE_PROJECT_NAME:-astrodash}_django-static"
     echo "Purging Django database and static file volumes..."
   ;;
   "--purge-data")
     COMPOSE_ARGS=""
-    PURGE_VOLUMES="${COMPOSE_PROJECT_NAME:-blast}_blast-data"
+    PURGE_VOLUMES="${COMPOSE_PROJECT_NAME:-astrodash}_astrodash-data"
     echo "Purging astro data volume..."
   ;;
   *)
@@ -54,7 +54,7 @@ case "${PURGE_OPTION}" in
 esac
 
 COMPOSE_CONFIG=" --profile $PROFILE"
-COMPOSE_CONFIG="${COMPOSE_CONFIG} --project-name ${COMPOSE_PROJECT_NAME:-blast}"
+COMPOSE_CONFIG="${COMPOSE_CONFIG} --project-name ${COMPOSE_PROJECT_NAME:-astrodash}"
 if [[ $PROFILE == "docs" ]]; then
   COMPOSE_CONFIG="${COMPOSE_CONFIG} -f docker/docker-compose.docs.yaml"
 else

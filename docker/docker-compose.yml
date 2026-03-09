@@ -1,15 +1,12 @@
-name: blast-base
+name: astrodash-base
 
 networks:
   internal:
     external: false
 
 volumes:
-  blast-db: {}
+  astrodash-db: {}
   django-static: {}
-  blast-data:
-    name: "blast-data"
-  object-data: {}
   astrodash-data: {}
 
 services:
@@ -22,7 +19,6 @@ services:
       - internal
     volumes:
       - django-static:/static
-      - blast-data:/data
       - ../nginx/default.conf:/etc/nginx/conf.d/default.conf
     profiles:
       - "full_prod"
@@ -31,16 +27,14 @@ services:
       - "slim_dev"
 
   app:
-    image: ${BLAST_IMAGE:-registry.gitlab.com/ncsa-blast/kubernetes/blast:latest}
+    image: ${ASTRODASH_IMAGE:-astrodash:latest}
     command: bash entrypoints/docker-entrypoint.app.sh
     networks:
       internal:
         aliases:
           - ${WEB_APP_HOST}
     volumes:
-      - blast-data:/mnt/data
       - django-static:/app/static
-      - ./dustmapsrc:/tmp/.dustmapsrc:ro
       - astrodash-data:/mnt/astrodash-data
     profiles:
       - "full_prod"
@@ -48,14 +42,13 @@ services:
       - "full_dev"
       - "slim_dev"
       - "ci"
-      - "batch"
 
   database:
     image: postgres:16
     platform: linux/x86_64
     restart: always
     volumes:
-      - blast-db:/var/lib/postgresql/data
+      - astrodash-db:/var/lib/postgresql/data
     networks:
       internal:
         aliases:
@@ -70,10 +63,9 @@ services:
       - "full_dev"
       - "slim_dev"
       - "ci"
-      - "batch"
 
   celery-worker:
-    image: ${BLAST_IMAGE:-registry.gitlab.com/ncsa-blast/kubernetes/blast:latest}
+    image: ${ASTRODASH_IMAGE:-astrodash:latest}
     command: bash entrypoints/docker-entrypoint.celery.sh
     networks:
       - internal
@@ -88,27 +80,23 @@ services:
           cpus: "${CELERY_WORKER_LIMIT_CPUS:-4.0}"
           memory: ${CELERY_WORKER_LIMIT_MEMORY:-4G}
     volumes:
-      - blast-data:/mnt/data
       - django-static:/app/static
-      - ./dustmapsrc:/tmp/.dustmapsrc:ro
+      - astrodash-data:/mnt/astrodash-data
     profiles:
       - "full_prod"
       - "full_dev"
-      - "batch"
 
   celery-beat:
-    image: ${BLAST_IMAGE:-registry.gitlab.com/ncsa-blast/kubernetes/blast:latest}
+    image: ${ASTRODASH_IMAGE:-astrodash:latest}
     command: bash entrypoints/docker-entrypoint.celery_beat.sh
     networks:
       - internal
     volumes:
-      - blast-data:/mnt/data
       - django-static:/app/static
-      - ./dustmapsrc:/tmp/.dustmapsrc:ro
+      - astrodash-data:/mnt/astrodash-data
     profiles:
       - "full_prod"
       - "full_dev"
-    #  - "batch"
 
   redis:
     image: redis:alpine
@@ -120,11 +108,10 @@ services:
     profiles:
       - "full_prod"
       - "full_dev"
-      - "batch"
       - "ci"
 
   flower:
-    image: ${BLAST_IMAGE:-registry.gitlab.com/ncsa-blast/kubernetes/blast:latest}
+    image: ${ASTRODASH_IMAGE:-astrodash:latest}
     command: bash entrypoints/docker-entrypoint.flower.sh
     networks:
       - internal
@@ -133,40 +120,3 @@ services:
     profiles:
       - "full_prod"
       - "full_dev"
-      - "batch"
-
-  batch:
-    image: python:3.9-buster
-    command: bash docker-entrypoint.batch.sh
-    networks:
-      - internal
-    volumes:
-      - ../batch/run_batch.py:/run_batch.py:ro
-      - ../app/entrypoints/wait-for-it.sh:/wait-for-it.sh:ro
-      - ../batch/docker-entrypoint.batch.sh:/docker-entrypoint.batch.sh:ro
-      - ${BATCH_CSV}:/input.csv:ro
-      - ${OUTPUT_DIR}:/results
-    profiles:
-      - "batch"
-
-  object-store:
-    image: quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z
-    ports:
-      - 127.0.0.1:${S3_CONSOLE_PORT:-9001}:${S3_CONSOLE_PORT:-9001}
-      - 127.0.0.1:${S3_SERVER_PORT:-9000}:${S3_SERVER_PORT:-9000}
-    networks:
-      - internal
-    command:
-    - server
-    - /data
-    - --console-address
-    - ":${S3_CONSOLE_PORT:-9001}"
-    volumes:
-      - object-data:/data
-    profiles:
-      - "full_prod"
-      - "slim_prod"
-      - "full_dev"
-      - "slim_dev"
-      - "ci"
-      - "batch"

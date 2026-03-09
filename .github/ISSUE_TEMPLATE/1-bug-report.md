@@ -3,7 +3,7 @@ name: "\U0001F41E Bug Report"
 about: Report an issue to help the project improve.
 title: "[Bug] "
 labels: bug
-assignees: djones1040
+assignees: ''
 
 ---
 

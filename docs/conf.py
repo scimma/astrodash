@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.abspath("../app/"))
 
 # Specify settings module
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "astrodash_project.settings")
 
 # Setup Django
 import django
@@ -23,9 +23,9 @@ django.setup()
 
 # -- Project information -----------------------------------------------------
 
-project = "Blast"
-copyright = "2024, Peter McGill, David Jones, T. Andrew Manning"
-author = "Peter McGill, David Jones, T. Andrew Manning"
+project = "Astrodash"
+copyright = "2024, T. Andrew Manning"
+author = "T. Andrew Manning"
 
 
 # -- General configuration ---------------------------------------------------

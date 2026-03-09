@@ -2,17 +2,9 @@
 
 set -eo pipefail
 
-# If .dustmapsrc has been mounted as a read-only file at /tmp/.dustmapsrc,
-# copy it to the expected location /root/.dustmapsrc if it does not already exist.
-if [[ ! -f "/root/.dustmapsrc" && -f "/tmp/.dustmapsrc" ]]; then
-  cp /tmp/.dustmapsrc /root/.dustmapsrc
-fi
-
-INIT_STARTED_DATA="${DATA_ROOT_DIR}/.initializing_data"
-INIT_STARTED_DB="${DATA_ROOT_DIR}/.initializing_db"
+INIT_STARTED_DB="${ASTRODASH_DATA_DIR}/.initializing_db"
 
 if [[ "${FORCE_INITIALIZATION}" == "true" ]]; then
-  rm -f "${INIT_STARTED_DATA}"
   rm -f "${INIT_STARTED_DB}"
 fi
 
@@ -25,30 +17,13 @@ if [ -n "$MAKE_MIGRATIONS" ]; then
   exit 0
 fi
 
-## Initialize astro data
+## Initialize Astrodash data
 ##
 
-if [[ -f "${INIT_STARTED_DATA}" ]]
-then
-  echo "Astro data is currently being initialized (\"${INIT_STARTED_DATA}\" exists)."
-  sleep 10
-  exit 1
+if [[ "${SKIP_INITIALIZATION}" != "true" ]]; then
+  python entrypoints/initialize_data.py
 else
-  echo "\"${INIT_STARTED_DATA}\" not found. Running initialization script..."
-  touch "${INIT_STARTED_DATA}"
-
-  # Create data folders on persistent volume and symlink to expected paths
-  bash entrypoints/initialize_data_dirs.sh
-  # Verify and download missing and invalid files
-  if [[ "${SKIP_INITIALIZATION}" != "true" ]]
-  then
-    python entrypoints/initialize_data.py
-  else
-    echo "Skipping data initialization."
-  fi
-
-  rm -f "${INIT_STARTED_DATA}"
-  echo "Data initialization complete."
+  echo "Skipping data initialization."
 fi
 
 ## Initialize Django database and static files
@@ -75,9 +50,9 @@ if [[ $TEST_MODE == 1 ]]; then
   set -e
   coverage run manage.py test \
     --exclude-tag=download \
-    host.tests api.tests users.tests \
+    astrodash.tests users.tests \
     -v 2
-  coverage report -i --omit=host/tests/*,host/migrations/*,app/*,host/urls.py,host/admin.py,host/apps.py,host/__init__.py,manage.py
+  coverage report -i --omit=astrodash/tests/*,astrodash/migrations/*,astrodash_project/*,manage.py
   coverage xml -i
   exit 0
 fi
@@ -87,5 +62,5 @@ if [[ $DEV_MODE == 1 ]]; then
   python manage.py runserver 0.0.0.0:${WEB_APP_PORT}
 else
   bash entrypoints/wait-for-it.sh ${WEB_SERVER_HOST}:${WEB_SERVER_PORT} --timeout=0
-  gunicorn app.wsgi --timeout 0 --bind 0.0.0.0:${WEB_APP_PORT} --workers=${GUNICORN_WORKERS:=1}
+  gunicorn astrodash_project.wsgi --timeout 0 --bind 0.0.0.0:${WEB_APP_PORT} --workers=${GUNICORN_WORKERS:=1}
 fi

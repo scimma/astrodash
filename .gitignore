@@ -141,34 +141,8 @@ quiverMaps/
 .dbdata/
 
 
-!data/
-data/*
-!data/cutout_cdn/
-!data/transmission/
-data/cutout_cdn/*
-!data/cutout_cdn/2010H/
-data/cutout_cdn/2010H/*
-!data/cutout_cdn/2010ag/
-data/cutout_cdn/2010ag/*
-!data/cutout_cdn/2010ai/
-data/cutout_cdn/2010ai/*
-!data/cutout_cdn/2010H/*
-!data/cutout_cdn/2010ag/*
-!data/cutout_cdn/2010ai/*
-!data/sed_output/2010H/*
-
 # static/
 
 .DS_Store
-
-data/fsps/*
-
-batch/*
-!batch/results.csv
-!batch/run_batch.py
-!batch/docker-entrypoint.batch.sh
-
-validation/validation_data/jones+18_panstarrs_g_cutouts/
-app/sbi-logs/
 
 .vscode/

@@ -1,9 +1,28 @@
-# blast
-Django web app for the automatic characterization of supernova hosts
+# Astrodash
 
-[![Documentation Status](https://readthedocs.org/projects/blast/badge/?version=latest)](https://blast.readthedocs.io/en/latest/?badge=latest)
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/astrophpeter/blast/main.svg)](https://results.pre-commit.ci/latest/github/astrophpeter/blast/main)
-[![codecov](https://codecov.io/gh/astrophpeter/blast/branch/main/graph/badge.svg?token=Y9JPAF8HVD)](https://codecov.io/gh/astrophpeter/blast)
-[![CodeFactor](https://www.codefactor.io/repository/github/astrophpeter/blast/badge)](https://www.codefactor.io/repository/github/astrophpeter/blast)
+Django web application for ML-based supernova spectrum classification using deep learning.
 
-Read the documentation at [https://blast.readthedocs.io/en/latest/](https://blast.readthedocs.io/en/latest/)
+Read the documentation at the project wiki or in the `docs/` directory.
+
+## Quick Start
+
+```bash
+# Start the development environment
+run/astrodashctl full_dev up
+
+# View logs
+run/astrodashctl full_dev logs
+
+# Stop the environment
+run/astrodashctl full_dev down
+```
+
+## Development
+
+See `CONTRIBUTING.md` for contribution guidelines.
+
+### Running Tests
+
+```bash
+run/astrodash.test.sh slim_dev
+```
