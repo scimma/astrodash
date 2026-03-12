@@ -11,4 +11,6 @@ urlpatterns = [
     path("classify/", ui_views.classify, name="classify"),
     path("batch/", ui_views.batch_process, name="batch_process_ui"),
     path("classify/twins/", ui_views.dash_twins, name="dash_twins"),
+    path("classify/twins/data/", ui_views.dash_twins_data, name="dash_twins_data"),
+    path("classify/twins/search/", ui_views.twins_search, name="twins_search"),
 ]

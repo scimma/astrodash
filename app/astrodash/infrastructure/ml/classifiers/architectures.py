@@ -259,6 +259,20 @@ class AstroDashPyTorchNet(nn.Module):
 
         return F.softmax(output, dim=1)
 
+    def forward_embedding(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Return the 1024-dim embedding (pre-softmax representation) for each sample.
+        Uses the same computation path as forward() up to and including fc1 + ReLU.
+        Intended for cosine-similarity search in embedding space (e.g. twins finder).
+        """
+        x = x.view(-1, 1, self.im_width, self.im_width)
+        h_pool1 = self.layer1(x)
+        h_pool2 = self.layer2(h_pool1)
+        h_pool2_transposed = h_pool2.permute(0, 2, 3, 1)
+        h_pool2_flat = h_pool2_transposed.reshape(h_pool2.size(0), -1)
+        h_fc1 = F.relu(self.fc1(h_pool2_flat))
+        return h_fc1
+
 # Transformer blocks
 class SinusoidalMLPPositionalEmbedding(nn.Module):
     def __init__(self, dim: int = 64):

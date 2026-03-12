@@ -1,0 +1,686 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>DASH Twins Explorer</title>
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 0; }
+    .wrap { max-width: 1500px; margin: 0 auto; padding: 14px; }
+    .row { display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; align-items: start; }
+    @media (max-width: 1100px) { .row { grid-template-columns: 1fr; } }
+
+    .card { background: #fff; border: 1px solid #e6e6e6; border-radius: 12px; padding: 12px; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .banner {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border: 1px solid #eee;
+      border-radius: 12px;
+      background: #fafafa;
+    }
+    @media (max-width: 900px) { .banner { grid-template-columns: 1fr; } }
+
+    label { display: block; font-size: 12px; color: #333; margin-bottom: 4px; }
+    input[type="range"] { width: 100%; }
+    select { width: 100%; padding: 7px 10px; border-radius: 10px; border: 1px solid #ddd; background: #fff; }
+    button {
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid #ddd;
+      background: #fff;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    button:hover { background: #f2f2f2; }
+
+    .muted { color: #666; font-size: 12px; }
+    .pill { display:inline-block; padding:2px 8px; border-radius: 999px; border:1px solid #ddd; font-size: 11px; background:#fafafa; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border-bottom: 1px solid #eee; padding: 6px 6px; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #fafafa; z-index: 1; }
+
+    .leftStack { display: grid; grid-template-rows: 58vh 36vh; gap: 12px; }
+    @media (max-width: 1100px) { .leftStack { grid-template-rows: 60vh 40vh; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h2 style="margin: 4px 0 8px 0;">DASH Twins Explorer</h2>
+  <div class="muted" style="margin-bottom: 10px;">
+    Twins are nearest neighbors in the original embedding space (cosine similarity).
+    Projection toggle only changes the 2D display.
+  </div>
+
+  <div class="banner">
+    <div>
+      <label for="targetNameSel">Target SN name</label>
+      <select id="targetNameSel"></select>
+    </div>
+    <div>
+      <label for="targetObsSel">Target observation (phase)</label>
+      <select id="targetObsSel"></select>
+      <div class="muted" style="margin-top:6px; font-size: 11px;">Sorted by phase; selects a specific row.</div>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+      <button id="projBtn">Switch to PCA</button>
+      <div class="muted" style="font-size: 11px;">Projection: <span id="projLabel" class="mono">UMAP</span></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <!-- LEFT -->
+    <div class="card">
+      <div class="leftStack">
+        <div id="plot" style="width:100%; height: 100%; min-height: 420px;"></div>
+        <div id="specplot" style="width:100%; height: 100%; min-height: 260px;"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="card">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div style="grid-column: 1 / -1;">
+          <div><span class="pill">Target:</span> <span id="targetInfo" class="mono">None (click a point or use dropdowns)</span></div>
+          <div class="muted" style="margin-top:6px; font-size: 11px;">Twins shown: <span id="twinsShown">0</span></div>
+          <div class="muted" style="margin-top:6px; font-size: 11px;">Spectra: <span id="specStatus">No target</span></div>
+        </div>
+
+        <div>
+          <label for="kRange">Top-K twins</label>
+          <input id="kRange" type="range" min="1" max="50" value="10" />
+          <div class="muted">K = <span id="kVal">10</span></div>
+        </div>
+
+        <div>
+          <label>Filters</label>
+          <div class="muted">
+            <div><input type="checkbox" id="excludeSelf" checked /> Exclude self</div>
+            <div><input type="checkbox" id="excludeSameName" checked /> Exclude same SN name</div>
+          </div>
+        </div>
+
+        <div style="grid-column: 1 / -1;">
+          <label>Twins list</label>
+          <div style="max-height: 62vh; overflow:auto; border:1px solid #eee; border-radius: 10px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>cos sim</th>
+                  <th>type</th>
+                  <th>SN</th>
+                  <th>phase</th>
+                  <th>idx</th>
+                </tr>
+              </thead>
+              <tbody id="twinsBody"></tbody>
+            </table>
+          </div>
+          <div class="muted" style="margin-top:8px; font-size: 11px;">
+            Click a row to jump to that point (it becomes the new target).
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(async function() {
+  const TWINS_SEARCH_URL = "{% url 'astrodash:twins_search' %}";
+  const PAYLOAD = await fetch("{% url 'astrodash:dash_twins_data' %}").then(r => r.json());
+
+  const isUserQuery = new URLSearchParams(window.location.search).get('user_query') === '1';
+  let userQueryResult = null;
+  if (isUserQuery) {
+    try {
+      const resp = await fetch(TWINS_SEARCH_URL + "?k=50", { credentials: "same-origin" });
+      if (resp.ok) {
+        userQueryResult = await resp.json();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        console.warn("Twins search failed:", resp.status, err);
+      }
+    } catch (e) {
+      console.warn("Twins search request failed:", e);
+    }
+  }
+
+const N = PAYLOAD.N;
+
+// projections
+const umap_x = PAYLOAD.umap_x;
+const umap_y = PAYLOAD.umap_y;
+const pca_x  = PAYLOAD.pca_x;
+const pca_y  = PAYLOAD.pca_y;
+
+// metadata
+const names  = PAYLOAD.names;
+const types  = PAYLOAD.types;
+const phases = PAYLOAD.phases;
+
+// knn
+const nn_idx  = PAYLOAD.nn_idx;
+const nn_dist = PAYLOAD.nn_dist;
+
+// spectra (embedded)
+const spectra_db = PAYLOAD.spectra_db;   // {sn: {wave, col_phases, flux_cols, source}}
+const row2col = PAYLOAD.row2col;         // per-row chosen column or null
+
+// projection state
+let currentProj = "umap";
+function getXY() {
+  if (currentProj === "pca") return {x: pca_x, y: pca_y, xlab: "PCA 1", ylab: "PCA 2"};
+  return {x: umap_x, y: umap_y, xlab: "UMAP 1", ylab: "UMAP 2"};
+}
+
+const palette = [
+  "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf",
+  "#393b79","#637939","#8c6d31","#843c39","#7b4173","#3182bd","#e6550d","#31a354","#756bb1","#636363"
+];
+const uniqTypes = Array.from(new Set(types)).sort();
+const type2color = {};
+uniqTypes.forEach((t, i) => { type2color[t] = palette[i % palette.length]; });
+
+// ----------------- name grouping (99by vs 1999by, sn prefix, punctuation) -----------------
+
+function baseName(raw) {
+  let s = String(raw ?? "");
+  s = s.split("(")[0].split("[")[0].trim();
+  s = s.split(/\s+/)[0];
+  return s;
+}
+
+function canonicalGroupId(raw) {
+  // 1) strip decorations + punctuation, lowercase
+  let s = baseName(raw).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (s.startsWith("sn")) s = s.slice(2);
+
+  // 2) convert 2-digit year forms like "99by" -> "1999by", "07bm" -> "2007bm"
+  // heuristic: 00-29 => 20xx, 30-99 => 19xx
+  const m = s.match(/^(\d{2})([a-z].*)$/);
+  if (m) {
+    const yy = parseInt(m[1], 10);
+    const rest = m[2];
+    const yyyy = (yy <= 29) ? (2000 + yy) : (1900 + yy);
+    return String(yyyy) + rest;
+  }
+
+  // 3) already 4-digit year? keep as-is
+  return s;
+}
+
+// Build groups once: groupId -> array of row indices
+const group2idxs = {};
+for (let i=0; i<N; i++) {
+  const gid = canonicalGroupId(names[i]);
+  if (!(gid in group2idxs)) group2idxs[gid] = [];
+  group2idxs[gid].push(i);
+}
+
+// Pick a nice display label per group (prefer a 4-digit year raw label if present)
+function displayLabelForGroup(gid) {
+  const idxs = group2idxs[gid] || [];
+  let best = (idxs.length ? String(names[idxs[0]]) : gid);
+  // prefer any raw label that contains 4-digit year matching gid
+  for (let k=0; k<idxs.length; k++) {
+    const raw = String(names[idxs[k]]);
+    const rawNorm = baseName(raw).toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (rawNorm.includes(gid)) {
+      best = raw;
+      break;
+    }
+  }
+  // If best is something like "sn1999by", show "1999by" in dropdown
+  return canonicalGroupId(best);
+}
+
+function fmtPhase(v) {
+  if (v === null || v === undefined) return "";
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "";
+  return x.toFixed(3);
+}
+
+function hoverText(i) {
+  const sn = names[i];
+  const ty = types[i];
+  const ph = phases ? phases[i] : null;
+  const gid = canonicalGroupId(sn);
+  let s = `idx=${i}<br>type=${ty}<br>SN=${sn}<br>group=${gid}`;
+  if (ph !== null && ph !== undefined) s += `<br>phase=${ph}`;
+  return s;
+}
+
+// embedding plot
+
+function buildTypeTraces() {
+  const {x, y} = getXY();
+  const base = uniqTypes.map(ty => {
+    const idxs = [];
+    for (let i=0; i<N; i++) if (types[i] === ty) idxs.push(i);
+    return {
+      type: "scattergl",
+      mode: "markers",
+      name: ty + ` (${idxs.length})`,
+      x: idxs.map(i => x[i]),
+      y: idxs.map(i => y[i]),
+      text: idxs.map(i => hoverText(i)),
+      hoverinfo: "text",
+      marker: { size: 6, opacity: 0.65, color: type2color[ty] },
+      customdata: idxs
+    };
+  });
+
+  const twinsTrace = {
+    type: "scattergl",
+    mode: "markers",
+    name: "twins",
+    x: [], y: [], text: [],
+    hoverinfo: "text",
+    marker: { size: 16, opacity: 1.0, color: "rgba(255,0,0,0)", line: { width: 3, color: "red" }, symbol: "circle" },
+    showlegend: true
+  };
+
+  const targetTrace = {
+    type: "scattergl",
+    mode: "markers",
+    name: "target",
+    x: [], y: [], text: [],
+    hoverinfo: "text",
+    marker: { size: 18, opacity: 1.0, color: "black", symbol: "x" },
+    showlegend: true
+  };
+
+  return {base, twinsTrace, targetTrace};
+}
+
+function makeLayout() {
+  const {xlab, ylab} = getXY();
+  return {
+    margin: {l: 45, r: 20, t: 20, b: 45},
+    xaxis: { title: xlab, automargin: true },
+    yaxis: { title: ylab, automargin: true },
+    legend: { orientation: "v" }
+  };
+}
+
+let {base: traces, twinsTrace, targetTrace} = buildTypeTraces();
+let layout = makeLayout();
+Plotly.newPlot("plot", [...traces, twinsTrace, targetTrace], layout, {responsive: true});
+
+// spectra plot (with axis labels)
+
+function specLayout() {
+  return {
+    margin: {l: 70, r: 20, t: 30, b: 80},
+    xaxis: {title: "Wavelength [Å]", automargin: true, title_standoff: 10},
+    yaxis: {title: "Flux",            automargin: true, title_standoff: 10},
+    legend: {
+      orientation: "h",
+      x: 0.0, xanchor: "left",
+      y: -0.25, yanchor: "top",
+      font: {size: 10}
+    }
+  };
+}
+
+Plotly.newPlot("specplot", [], specLayout(), {responsive: true});
+
+// ----------------- UI state -----------------
+
+let targetIdx = null;
+
+const targetInfoEl = document.getElementById("targetInfo");
+const twinsShownEl = document.getElementById("twinsShown");
+const twinsBody = document.getElementById("twinsBody");
+const kRange = document.getElementById("kRange");
+const kVal = document.getElementById("kVal");
+const excludeSelfEl = document.getElementById("excludeSelf");
+const excludeSameNameEl = document.getElementById("excludeSameName");
+
+const targetNameSel = document.getElementById("targetNameSel");
+const targetObsSel  = document.getElementById("targetObsSel");
+
+const projBtn   = document.getElementById("projBtn");
+const projLabel = document.getElementById("projLabel");
+
+const specStatusEl = document.getElementById("specStatus");
+
+kRange.addEventListener("input", () => { kVal.textContent = kRange.value; renderTwins(); });
+excludeSelfEl.addEventListener("change", renderTwins);
+excludeSameNameEl.addEventListener("change", renderTwins);
+
+function cosineSimFromDist(d) { return 1.0 - d; }
+
+function renderTwinsTable(rows) {
+  twinsBody.innerHTML = "";
+  rows.forEach((row, idx) => {
+    const j = row.j, cs = row.cosSim;
+    const ty = types[j], sn = names[j], ph = phases ? phases[j] : "", gid = canonicalGroupId(sn);
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.innerHTML = `
+      <td>${idx+1}</td>
+      <td class="mono">${typeof cs === "number" ? cs.toFixed(5) : cs}</td>
+      <td><span class="pill" style="border-color:${type2color[ty]}; color:${type2color[ty]};">${ty}</span></td>
+      <td class="mono">${gid}</td>
+      <td class="mono">${fmtPhase(ph)}</td>
+      <td class="mono">${j}</td>
+    `;
+    tr.addEventListener("click", () => setTarget(j));
+    twinsBody.appendChild(tr);
+  });
+}
+
+function clearHighlights() {
+  Plotly.restyle("plot", {x:[[]], y:[[]], text:[[]]}, [traces.length]);       // twins
+  Plotly.restyle("plot", {x:[[]], y:[[]], text:[[]]}, [traces.length + 1]);   // target
+}
+
+function clearSpectra(msg="No target") {
+  specStatusEl.textContent = msg;
+  Plotly.react("specplot", [], specLayout(), {responsive:true});
+}
+
+function getSpectrumForRow(i) {
+  const sn = String(names[i]);
+  const db = spectra_db ? spectra_db[sn] : null;
+  if (!db) return null;
+
+  const wave = db.wave;
+  const colPhases = db.col_phases || [];
+  const fluxCols = db.flux_cols || [];
+  if (!fluxCols.length) return null;
+
+  let col = row2col ? row2col[i] : null;
+  if (col === null || col === undefined) col = 0;
+  col = Math.max(0, Math.min(fluxCols.length - 1, Number(col)));
+
+  const rowPh = phases ? phases[i] : null;
+  const colPh = (colPhases && colPhases.length > col) ? colPhases[col] : null;
+
+  return {
+    sn,
+    gid: canonicalGroupId(sn),
+    wave,
+    flux: fluxCols[col],
+    rowPhase: rowPh,
+    colPhase: colPh,
+    source: db.source || ""
+  };
+}
+
+function twinIndicesToSpecTraces(twinIdxs, includePhaseInName = true) {
+  const out = [];
+  twinIdxs.forEach((j, k) => {
+    const sp = getSpectrumForRow(j);
+    if (!sp) return;
+    const ty = String(types[j]);
+    const c = type2color[ty] || "#888";
+    const name = includePhaseInName
+      ? `${k+1}: ${sp.gid} (${ty}) (row φ=${fmtPhase(sp.rowPhase)} | col φ=${fmtPhase(sp.colPhase)})`
+      : `${k+1}: ${sp.gid} (${ty})`;
+    out.push({ type: "scatter", mode: "lines", name, x: sp.wave, y: sp.flux, line: { width: 1, color: c }, hoverinfo: "name" });
+  });
+  return out;
+}
+
+function updateSpectraPlot(twinIdxs) {
+  if (targetIdx === null) {
+    clearSpectra("No target");
+    return;
+  }
+
+  const tgt = getSpectrumForRow(targetIdx);
+  if (!tgt) {
+    clearSpectra("No spectra for target");
+    return;
+  }
+
+  const twinTraces = twinIndicesToSpecTraces(twinIdxs);
+  const specTraces = [{
+    type: "scatter",
+    mode: "lines",
+    name: `TARGET ${tgt.gid} (row φ=${fmtPhase(tgt.rowPhase)} | col φ=${fmtPhase(tgt.colPhase)})`,
+    x: tgt.wave,
+    y: tgt.flux,
+    line: {width: 3, color: "black"},
+    hoverinfo: "name"
+  }, ...twinTraces];
+  specStatusEl.textContent = `Showing target + ${twinTraces.length} twins`;
+  Plotly.react("specplot", specTraces, specLayout(), {responsive:true});
+}
+
+function setTarget(i, syncDropdowns=true) {
+  targetIdx = i;
+
+  const sn = names[i];
+  const ty = types[i];
+  const ph = phases ? phases[i] : null;
+  const gid = canonicalGroupId(sn);
+
+  let info = `idx=${i}  type=${ty}  SN=${sn}  group=${gid}`;
+  if (ph !== null && ph !== undefined) info += `  phase=${ph}`;
+  targetInfoEl.textContent = info;
+
+  if (syncDropdowns) {
+    targetNameSel.value = gid;
+    populateObsDropdown(gid, i);
+  }
+  renderTwins();
+}
+
+function renderTwins() {
+  if (targetIdx === null) {
+    if (userQueryResult) {
+      renderUserQueryMode();
+      return;
+    }
+    twinsShownEl.textContent = "0";
+    clearHighlights();
+    clearSpectra("No target");
+    return;
+  }
+
+  const K = parseInt(kRange.value, 10);
+  const excludeSelf = excludeSelfEl.checked;
+  const excludeSameName = excludeSameNameEl.checked;
+
+  const targetName = names[targetIdx];
+  const targetGid  = canonicalGroupId(targetName);
+
+  const neighIdx = nn_idx[targetIdx];
+  const neighDist = nn_dist[targetIdx];
+
+  const kept = [];
+  for (let r=0; r<neighIdx.length; r++) {
+    const j = neighIdx[r];
+    if (excludeSelf && j === targetIdx) continue;
+    if (excludeSameName && canonicalGroupId(names[j]) === targetGid) continue;
+    kept.push({j, d: neighDist[r]});
+    if (kept.length >= K) break;
+  }
+
+  twinsShownEl.textContent = String(kept.length);
+
+  const {x, y} = getXY();
+
+  Plotly.restyle("plot",
+    {x:[kept.map(o => x[o.j])], y:[kept.map(o => y[o.j])], text:[kept.map(o => hoverText(o.j))]},
+    [traces.length]
+  );
+  Plotly.restyle("plot",
+    {x:[[x[targetIdx]]], y:[[y[targetIdx]]], text:[[hoverText(targetIdx)]]},
+    [traces.length + 1]
+  );
+
+  renderTwinsTable(kept.map(o => ({ j: o.j, cosSim: cosineSimFromDist(o.d) })));
+  updateSpectraPlot(kept.map(o => o.j));
+}
+
+// ----------------- dropdowns (GROUPED) -----------------
+
+function populateNameDropdown() {
+  const gids = Object.keys(group2idxs).sort();
+  targetNameSel.innerHTML = "";
+
+  const opt0 = document.createElement("option");
+  opt0.value = "";
+  opt0.textContent = "(select SN name)";
+  targetNameSel.appendChild(opt0);
+
+  gids.forEach(gid => {
+    const nobs = (group2idxs[gid] || []).length;
+    const opt = document.createElement("option");
+    opt.value = gid;
+    opt.textContent = `${displayLabelForGroup(gid)} (${nobs})`;
+    targetNameSel.appendChild(opt);
+  });
+}
+
+function populateObsDropdown(groupId, preferredIdx=null) {
+  targetObsSel.innerHTML = "";
+
+  if (!groupId) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(select SN name first)";
+    targetObsSel.appendChild(opt);
+    return;
+  }
+
+  const idxs = (group2idxs[groupId] || []).slice();
+
+  idxs.sort((a, b) => {
+    const pa = phases ? Number(phases[a]) : NaN;
+    const pb = phases ? Number(phases[b]) : NaN;
+    const fa = Number.isFinite(pa);
+    const fb = Number.isFinite(pb);
+    if (fa && fb) return pa - pb;
+    if (fa && !fb) return -1;
+    if (!fa && fb) return 1;
+    return a - b;
+  });
+
+  idxs.forEach(i => {
+    const raw = String(names[i]);
+    const ph = phases ? phases[i] : null;
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `idx=${i} | phase=${fmtPhase(ph)} | label=${raw}`;
+    targetObsSel.appendChild(opt);
+  });
+
+  if (preferredIdx !== null && preferredIdx !== undefined) targetObsSel.value = String(preferredIdx);
+  else if (idxs.length > 0) targetObsSel.value = String(idxs[0]);
+}
+
+targetNameSel.addEventListener("change", () => {
+  const gid = targetNameSel.value;
+  populateObsDropdown(gid, null);
+  const v = targetObsSel.value;
+  if (v !== "") setTarget(parseInt(v, 10), false);
+});
+
+targetObsSel.addEventListener("change", () => {
+  const v = targetObsSel.value;
+  if (v === "") return;
+  setTarget(parseInt(v, 10), false);
+});
+
+// projection toggle
+projBtn.addEventListener("click", () => {
+  if (currentProj === "umap") {
+    currentProj = "pca";
+    projBtn.textContent = "Switch to UMAP";
+    projLabel.textContent = "PCA";
+  } else {
+    currentProj = "umap";
+    projBtn.textContent = "Switch to PCA";
+    projLabel.textContent = "UMAP";
+  }
+
+  const built = buildTypeTraces();
+  traces = built.base;
+  twinsTrace = built.twinsTrace;
+  targetTrace = built.targetTrace;
+  layout = makeLayout();
+
+  Plotly.react("plot", [...traces, twinsTrace, targetTrace], layout, {responsive: true})
+    .then(() => { hookPlotClick(); if (userQueryResult) renderUserQueryMode(); else renderTwins(); });
+});
+
+// plot click
+function hookPlotClick() {
+  const plotDiv = document.getElementById("plot");
+  plotDiv.on('plotly_click', (ev) => {
+    const pt = ev.points[0];
+    const originalIndex = pt.customdata;
+    if (originalIndex === undefined || originalIndex === null) return;
+    setTarget(originalIndex, true);
+  });
+}
+
+hookPlotClick();
+populateNameDropdown();
+populateObsDropdown("", null);
+clearSpectra("No target");
+
+function renderUserQueryMode() {
+  if (!userQueryResult) return;
+  const {x, y} = getXY();
+  const qUmap = userQueryResult.query_umap || [];
+  const qPca = userQueryResult.query_pca || [];
+  const allTwinIdxs = userQueryResult.twin_indices || [];
+  const allTwinSims = userQueryResult.twin_similarities || [];
+  const K = Math.max(1, Math.min(50, parseInt(kRange.value, 10) || 10));
+  const twinIdxs = allTwinIdxs.slice(0, K);
+  const twinSims = allTwinSims.slice(0, K);
+  const qx = currentProj === "pca" ? (qPca[0] != null ? qPca[0] : qUmap[0]) : qUmap[0];
+  const qy = currentProj === "pca" ? (qPca[1] != null ? qPca[1] : qUmap[1]) : qUmap[1];
+  const twinX = twinIdxs.map(j => x[j]);
+  const twinY = twinIdxs.map(j => y[j]);
+  Plotly.restyle("plot", {x: [[qx]], y: [[qy]], text: [["Your spectrum"]]}, [traces.length + 1]);
+  Plotly.restyle("plot", {x: [twinX], y: [twinY], text: [twinIdxs.map(j => hoverText(j))]}, [traces.length]);
+  targetInfoEl.textContent = "Your spectrum (from classification)";
+  twinsShownEl.textContent = String(twinIdxs.length);
+  renderTwinsTable(twinIdxs.map((j, idx) => ({ j, cosSim: twinSims[idx] != null ? Number(twinSims[idx]) : "" })));
+  const specTraces = [];
+  if (userQueryResult.user_spectrum && Array.isArray(userQueryResult.user_spectrum.wave) && Array.isArray(userQueryResult.user_spectrum.flux)) {
+    specTraces.push({
+      type: "scatter", mode: "lines", name: "Your spectrum",
+      x: userQueryResult.user_spectrum.wave, y: userQueryResult.user_spectrum.flux.map(v => v - 0.5),
+      line: {width: 3, color: "black"}, hoverinfo: "name"
+    });
+  }
+  specTraces.push(...twinIndicesToSpecTraces(twinIdxs, false));
+  specStatusEl.textContent = specTraces.length ? "Your spectrum + " + (specTraces.length - 1) + " twins" : "Twins";
+  Plotly.react("specplot", specTraces.length ? specTraces : [], specLayout(), {responsive: true});
+}
+
+if (userQueryResult) {
+  renderUserQueryMode();
+} else if (isUserQuery) {
+  const banner = document.querySelector(".banner");
+  if (banner) {
+    const msg = document.createElement("div");
+    msg.style.gridColumn = "1 / -1";
+    msg.style.color = "#c00";
+    msg.style.fontSize = "13px";
+    msg.textContent = "Classify a spectrum with DASH first to see your point and twins here.";
+    banner.appendChild(msg);
+  }
+}
+
+})();
+</script>
+</body>
+</html>

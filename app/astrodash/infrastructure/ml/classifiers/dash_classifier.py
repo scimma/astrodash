@@ -108,7 +108,9 @@ class DashClassifier(BaseClassifier):
         input_tensor = torch.from_numpy(processed_flux).float().reshape(1, -1)
         with torch.no_grad():
             outputs = self.model(input_tensor)
+            embedding = self.model.forward_embedding(input_tensor)
         softmax = outputs[0].cpu().numpy()
+        embedding_np = embedding[0].cpu().numpy()
 
         # Only use the first n_bins outputs (corresponding to actual galaxy types)
         # The model may have been trained with more classes but only the first n_bins are valid
@@ -151,7 +153,8 @@ class DashClassifier(BaseClassifier):
                     'redshift': z,
                     'rlap': None
                 },
-                'reliable_matches': False
+                'reliable_matches': False,
+                'embedding': embedding_np.tolist(),
             }
 
         # Use combined_prob like the original DASH package with ALL matches
@@ -249,7 +252,8 @@ class DashClassifier(BaseClassifier):
         result = {
             'best_matches': matches[:3],  # Only return top 3 for display
             'best_match': best_match,
-            'reliable_matches': reliable_flag
+            'reliable_matches': reliable_flag,
+            'embedding': embedding_np.tolist(),
         }
 
         return result
@@ -260,6 +264,31 @@ class DashClassifier(BaseClassifier):
         """
         import asyncio
         return await asyncio.to_thread(self.classify_sync, spectrum)
+
+    def extract_embedding_sync(self, spectrum: Any) -> np.ndarray:
+        """
+        Extract the 1024-dim DASH embedding for a spectrum (synchronous).
+        Uses the same preprocessing as classify_sync and the same forward path
+        as forward_embedding (fc1 + ReLU, no dropout). Returns a 1D numpy array.
+        """
+        if self.model is None:
+            logger.error("Dash model is not loaded. Cannot extract embedding.")
+            raise ValueError("Dash model is not loaded.")
+        x = np.array(spectrum.x)
+        y = np.array(spectrum.y)
+        z = getattr(spectrum, 'redshift', 0.0) or 0.0
+        processed_flux, _, _, _ = self.processor.process(x, y, z)
+        input_tensor = torch.from_numpy(processed_flux).float().reshape(1, -1)
+        with torch.no_grad():
+            embedding = self.model.forward_embedding(input_tensor)
+        return embedding[0].cpu().numpy().copy()
+
+    async def extract_embedding(self, spectrum: Any) -> np.ndarray:
+        """
+        Async wrapper that runs extract_embedding_sync in a thread.
+        """
+        import asyncio
+        return await asyncio.to_thread(self.extract_embedding_sync, spectrum)
 
     def load_model_from_state_dict(self, state_dict, n_classes):
         """

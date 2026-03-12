@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from astrodash.config.settings import get_settings, Settings
 from astrodash.domain.services.template_analysis_service import TemplateAnalysisService
@@ -12,6 +13,7 @@ from astrodash.domain.services.spectrum_service import SpectrumService
 from astrodash.domain.services.model_service import ModelService
 from astrodash.domain.services.batch_processing_service import BatchProcessingService
 from astrodash.domain.services.redshift_service import RedshiftService
+from astrodash.domain.services.twins_search_service import TwinsSearchService
 from astrodash.infrastructure.storage.file_spectrum_repository import FileSpectrumRepository, OSCSpectrumRepository
 from astrodash.infrastructure.storage.model_storage import ModelStorage
 from astrodash.infrastructure.ml.templates import create_spectrum_template_handler
@@ -97,3 +99,9 @@ def get_batch_processing_service() -> BatchProcessingService:
 @lru_cache()
 def get_redshift_service() -> RedshiftService:
     return RedshiftService(get_config())
+
+
+@lru_cache()
+def get_twins_search_service() -> TwinsSearchService:
+    """Load Twins artifacts from {data_dir}/explorer (same mount as models, templates, etc.)."""
+    return TwinsSearchService(Path(get_config().data_dir) / "explorer")

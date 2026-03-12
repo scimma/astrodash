@@ -1,13 +1,14 @@
 from django.shortcuts import render
 from django.contrib import messages
 from django.conf import settings
-from django.http import HttpResponseRedirect, FileResponse, Http404
+from django.http import HttpResponseRedirect, FileResponse, Http404, JsonResponse
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.urls import reverse
 from pathlib import Path
 
 from astrodash.forms import ClassifyForm, BatchForm, ModelSelectionForm
 from astrodash.services import (
+    get_config,
     get_spectrum_processing_service,
     get_classification_service,
     get_spectrum_service,
@@ -15,13 +16,14 @@ from astrodash.services import (
     get_batch_processing_service,
     get_line_list_service,
     get_template_analysis_service,
+    get_twins_search_service,
 )
 from astrodash.core.exceptions import AppException
 from astrodash.config.logging import get_logger
 from asgiref.sync import async_to_sync
 from bokeh.embed import components
 from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool, Span
+from bokeh.models import ColumnDataSource, HoverTool, Span, Label
 import json
 
 
@@ -37,17 +39,60 @@ def landing_page(request):
 @xframe_options_sameorigin
 def dash_twins(request):
     """
-    Serves the DASH Twins Explorer static HTML (embedding visualization).
-    File lives under the astrodash app: astrodash/explorer/dash_twinsfromspace.html
+    Renders the DASH Twins Explorer (embedding visualization).
+    UI is in astrodash/explorer/dash_twins.html; data is loaded via dash_twins_data.
     """
-    path = Path(settings.BASE_DIR) / "astrodash" / "explorer" / "dash_twinsfromspace.html"
+    return render(request, "astrodash/explorer/dash_twins.html")
+
+
+def dash_twins_data(request):
+    """
+    Serves the DASH Twins payload JSON from {data_dir}/explorer (same as models, templates).
+    Generate with extract_payload.py --build-artifacts (optionally --out-dir to data_dir/explorer).
+    """
+    path = Path(get_config().data_dir) / "explorer" / "dash_twins_payload.json"
     if not path.is_file():
-        raise Http404("DASH Twins Explorer file not found.")
+        raise Http404("DASH Twins data not found. Run extract_payload.py --build-artifacts and ensure files are in ASTRODASH_DATA_DIR/explorer/.")
     return FileResponse(
         open(path, "rb"),
-        content_type="text/html",
+        content_type="application/json",
         as_attachment=False,
     )
+
+
+def twins_search(request):
+    """
+    POST or GET: run twins search using the DASH embedding stored in session
+    (set after classifying a spectrum with DASH). Returns JSON with query_umap,
+    query_pca, twin_indices, twin_similarities, and optionally user_spectrum.
+    """
+    import numpy as np
+    embedding = request.session.get('classify_dash_embedding')
+    if not embedding or not isinstance(embedding, list) or len(embedding) != 1024:
+        return JsonResponse(
+            {'error': 'No DASH embedding in session. Classify a spectrum with DASH first.'},
+            status=400,
+        )
+    try:
+        k = 20
+        if request.method == 'POST' and request.POST.get('k'):
+            k = int(request.POST.get('k'))
+        elif request.method == 'GET' and request.GET.get('k'):
+            k = int(request.GET.get('k'))
+        k = max(1, min(50, k))
+        svc = get_twins_search_service()
+        result = svc.find_twins(np.array(embedding, dtype=np.float32), k=k)
+        data = dict(result)
+        if request.session.get('classify_processed'):
+            stored = request.session['classify_processed']
+            data['user_spectrum'] = {
+                'wave': stored.get('x', []),
+                'flux': stored.get('y', []),
+            }
+        return JsonResponse(data)
+    except Exception as e:
+        logger.exception("twins_search failed")
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def model_selection(request):
@@ -350,6 +395,7 @@ def classify(request):
                     'plot_div': plot_div,
                     'model_type': display_model_type,
                     'success': True,
+                    'has_dash_embedding': bool(request.session.get('classify_dash_embedding')),
                     'plot_wave_min': plot_wave_min,
                     'plot_wave_max': plot_wave_max,
                     'show_templates_section': show_templates_section,
@@ -427,14 +473,20 @@ def classify(request):
                 # Template overlays only available for DASH model (templates are DASH-specific)
                 show_templates_section = classification.model_type == 'dash'
 
+                # Store DASH embedding in session for "Find Twins" (only when DASH and embedding present)
+                if classification.model_type == 'dash' and isinstance(classification.results.get('embedding'), list) and len(classification.results['embedding']) == 1024:
+                    request.session['classify_dash_embedding'] = classification.results['embedding']
+                else:
+                    request.session.pop('classify_dash_embedding', None)
+
                 # Store in session for "Apply overlays" re-renders (so we don't re-run classification)
                 request.session['classify_processed'] = {
-                    'x': [float(v) for v in getattr(processed, 'x', [])],
-                    'y': [float(v) for v in getattr(processed, 'y', [])],
+                    'x': list(getattr(processed, 'x', [])),
+                    'y': list(getattr(processed, 'y', [])),
                 }
                 request.session['classify_results'] = formatted_results
                 request.session['classify_model_type'] = display_model_type
-                request.session['classify_show_templates_section'] = bool(show_templates_section)
+                request.session['classify_show_templates_section'] = show_templates_section
                 request.session['classify_plot_wave_min'] = plot_wave_min
                 request.session['classify_plot_wave_max'] = plot_wave_max
 
@@ -489,6 +541,7 @@ def classify(request):
                     'plot_div': plot_div,
                     'model_type': display_model_type,
                     'success': True,
+                    'has_dash_embedding': bool(request.session.get('classify_dash_embedding')),
                     'plot_wave_min': plot_wave_min,
                     'plot_wave_max': plot_wave_max,
                     'show_templates_section': show_templates_section,
@@ -693,18 +746,30 @@ def _create_bokeh_plot(spectrum, element_lines=None, template_spectra=None, wave
     ))
 
     # Element/ion lines: vertical spans at each wavelength in range; each element gets a distinct color
+    # Labels go next to the line (first wavelength in range) instead of in a legend
     if element_lines and wave_min is not None and wave_max is not None:
+        y_max = max(y) * 1.02 if y else 0
         for idx, (element_name, wavelengths) in enumerate(element_lines):
             color = _PLOT_OVERLAY_COLORS[idx % len(_PLOT_OVERLAY_COLORS)]
-            for wl in wavelengths:
-                if wave_min <= wl <= wave_max:
-                    span = Span(location=wl, dimension="height", line_color=color, line_dash="4 4", line_width=1)
-                    p.add_layout(span)
-            # Legend entry: line outside plot range so legend shows color and label
-            out_x = wave_min - (wave_max - wave_min)
-            legend_cds = ColumnDataSource(data=dict(x=[out_x, out_x], y=[0, 0]))
-            p.line("x", "y", source=legend_cds, line_color=color, line_dash="4 4", line_width=2,
-                   legend_label=f"{element_name} (line)")
+            wls_in_range = [wl for wl in wavelengths if wave_min <= wl <= wave_max]
+            for wl in wls_in_range:
+                span = Span(location=wl, dimension="height", line_color=color, line_dash="4 4", line_width=1)
+                p.add_layout(span)
+            if wls_in_range:
+                first_wl = wls_in_range[0]
+                label = Label(
+                    x=first_wl,
+                    y=y_max,
+                    text=element_name,
+                    x_units="data",
+                    y_units="data",
+                    text_color=color,
+                    text_font_size="9pt",
+                    text_alpha=0.9,
+                    x_offset=4,
+                    y_offset=-8,
+                )
+                p.add_layout(label)
 
     # Template spectra: extra lines
     if template_spectra:
@@ -749,12 +814,9 @@ def _format_results(results):
         # Create a dict representation
         match_dict = {}
         
-        # Extract fields needed for template, converting numpy types to Python native
+        # Extract fields needed for template
         for field in ['type', 'age', 'probability', 'redshift', 'reliable']:
-            val = get_attr(match, field)
-            if hasattr(val, 'item'):
-                val = val.item()
-            match_dict[field] = val
+            match_dict[field] = get_attr(match, field)
             
         # Add formatted probability
         if match_dict['probability'] is not None:

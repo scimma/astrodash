@@ -40,13 +40,6 @@ class Settings(BaseSettings):
     db_url: Optional[AnyUrl] = Field(None, env="ASTRODASH_DATABASE_URL")
     db_echo: bool = Field(False, env="ASTRODASH_DB_ECHO")
 
-    # S3 Object Storage
-    s3_endpoint_url: str = Field("", env="ASTRODASH_S3_ENDPOINT_URL")
-    s3_access_key_id: str = Field("", env="ASTRODASH_S3_ACCESS_KEY_ID")
-    s3_secret_access_key: str = Field("", env="ASTRODASH_S3_SECRET_ACCESS_KEY")
-    s3_region_name: str = Field("", env="ASTRODASH_S3_REGION_NAME")
-    s3_bucket: str = Field("", env="ASTRODASH_S3_BUCKET")
-
     # Data Storage (External to application code)
     data_dir: str = Field("/mnt/astrodash-data", env="ASTRODASH_DATA_DIR")
     storage_dir: str = Field("/mnt/astrodash-data", env="ASTRODASH_STORAGE_DIR")
