@@ -33,7 +33,7 @@ SILKY_INTERCEPT_PERCENT = int(os.environ.get("SILKY_INTERCEPT_PERCENT", "0"))
 
 
 HOSTNAMES = os.environ.get("DJANGO_HOSTNAMES", "localhost").split(",")
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",")
 # CORS: allow configuring allowed origins via env (comma-separated) or accept all with "*"
 cors_env = os.environ.get("ASTRO_DASH_CORS_ALLOWED_ORIGINS", "*")
 if cors_env.strip() == "*":
@@ -73,6 +73,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
