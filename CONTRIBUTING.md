@@ -1,11 +1,63 @@
-We need your help
+# Contributing to AstroDash
 
-We want your help. No, really. There may be a little voice inside your head that is telling you that you're not ready to be an open source contributor; that your skills aren't nearly good enough to contribute. What could you possibly offer a project like this one?
+Thank you for your interest in contributing to AstroDash! We welcome
+contributions from the community, whether it's reporting bugs, suggesting
+features, improving documentation, or writing code.
 
-We assure you - the little voice in your head is wrong. If you can write code or documentation, you can contribute code to open source. Contributing to open source projects is a fantastic way to advance one's coding and open source workflow skills. Writing perfect code isn't the measure of a good developer (that would disqualify all of us!); it's trying to create something, making mistakes, and learning from those mistakes. That's how we all improve, and we are happy to help others learn.
+## How to Contribute
 
-Being an open source contributor doesn't just mean writing code, either. You can help out by writing documentation, tests, or even giving feedback about the project (and yes - that includes giving feedback about the contribution process). Some of these contributions may be the most valuable to the project as a whole, because you're coming to the project with fresh eyes, so you can see the errors and assumptions that seasoned contributors have glossed over.
+### Reporting Issues
 
-(This text was originally written by Adrienne Lowe for a PyCon talk, and was adapted based on its use in the README file for the MetPy project and Astropy project.)
+If you find a bug or have a feature request, please open an issue on the
+[GitHub issue tracker](https://github.com/scimma/astrodash/issues). When
+reporting a bug, please include:
 
-Please see the developer guide in the Astrodash documentation to get started.
+- A clear description of the problem
+- Steps to reproduce the issue
+- Expected and actual behavior
+- Your environment (browser, operating system, deployment method)
+
+### Contributing Code
+
+1. **Fork the repository** and create a new branch from `main` for your work.
+2. **Set up your development environment** — see the
+   [Developer Getting Started](docs/developer/getting-started.md) guide.
+3. **Make your changes** in a focused, well-scoped branch.
+4. **Test your changes** locally using `run/astrodash.test.sh slim_dev`.
+5. **Submit a pull request** against `main` with a clear description of
+   what your changes do and why.
+
+### Contributing Documentation
+
+Documentation improvements are always welcome. The documentation is written in
+markdown and lives in the `docs/` directory. See the
+[Documentation Guide](docs/developer/documentation.md) for details on the
+structure and how to contribute.
+
+### Contributing a New ML Classifier
+
+If you want to add a new machine learning classifier model, see the
+[Contributing Classifiers](docs/guides/contributing-classifiers.md) guide for
+detailed instructions on backend, frontend, and documentation changes.
+
+## Development Guidelines
+
+- Write clear, descriptive commit messages.
+- Keep pull requests focused on a single change.
+- Add or update documentation for new features.
+- Follow the existing code style and conventions.
+
+## Code of Conduct
+
+This project follows the
+[Contributor Covenant Code of Conduct](https://www.contributor-covenant.org/version/1/4/code-of-conduct.html).
+By participating, you are expected to uphold this code. Please see
+[CODE_OF_CONDUCT.md](.github/CODE_OF_CONDUCT.md) for details.
+
+## Getting Help
+
+If you need help with a contribution, feel free to:
+
+- Open a draft pull request and ask questions in the description
+- Open an issue with your question
+- Contact the team at support@scimma.org
