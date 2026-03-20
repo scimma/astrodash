@@ -48,6 +48,27 @@
 
     .leftStack { display: grid; grid-template-rows: 58vh 36vh; gap: 12px; }
     @media (max-width: 1100px) { .leftStack { grid-template-rows: 60vh 40vh; } }
+
+    .plot-container { position: relative; }
+    .spinner-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.7);
+      z-index: 10;
+      border-radius: 12px;
+    }
+    .spinner-overlay.hidden { display: none; }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 5px solid #e6e6e6;
+      border-top-color: #1f77b4;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -78,7 +99,10 @@
     <!-- LEFT -->
     <div class="card">
       <div class="leftStack">
-        <div id="plot" style="width:100%; height: 100%; min-height: 420px;"></div>
+        <div class="plot-container">
+          <div id="plotSpinner" class="spinner-overlay"><div class="spinner"></div></div>
+          <div id="plot" style="width:100%; height: 100%; min-height: 420px;"></div>
+        </div>
         <div id="specplot" style="width:100%; height: 100%; min-height: 260px;"></div>
       </div>
     </div>
@@ -135,6 +159,11 @@
 <script>
 (async function() {
   const TWINS_SEARCH_URL = "{% url 'astrodash:twins_search' %}";
+  const plotSpinner = document.getElementById("plotSpinner");
+  function showSpinner() { plotSpinner.classList.remove("hidden"); }
+  function hideSpinner() { plotSpinner.classList.add("hidden"); }
+
+  showSpinner();
   const PAYLOAD = await fetch("{% url 'astrodash:dash_twins_data' %}").then(r => r.json());
 
   const isUserQuery = new URLSearchParams(window.location.search).get('user_query') === '1';
@@ -153,6 +182,7 @@
       userQueryResult = { error: "Request failed. Classify a spectrum with DASH first." };
     }
   }
+  hideSpinner();
 
 const N = PAYLOAD.N;
 
