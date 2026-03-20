@@ -70,7 +70,7 @@ def landing_page(request):
 def team_members(request):
     """
     Renders the Team Members page: affiliations (labs/universities) with
-    members (picture, name, description), Blast-style layout.
+    members (picture, name, description).
     """
     from astrodash.models import TeamAffiliation
     affiliations = TeamAffiliation.objects.prefetch_related("members").all()

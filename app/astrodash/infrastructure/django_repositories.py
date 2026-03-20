@@ -12,7 +12,7 @@ from astrodash.models import SpectrumRecord, UserModelRecord
 
 
 class DjangoSpectrumRepository(SpectrumRepository):
-    """Persist spectra using the Blast Django database."""
+    """Persist spectra using the AstroDash Django database."""
 
     def save(self, spectrum: Spectrum) -> Spectrum:
         if spectrum.id is None:
