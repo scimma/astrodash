@@ -1,12 +1,32 @@
 from __future__ import annotations
 
 import json
+import os
+from functools import wraps
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 from django.utils.decorators import method_decorator
 from django.core.files.uploadedfile import UploadedFile
 from asgiref.sync import async_to_sync
+
+
+# Temporarily disable API write endpoints until IAM is implemented.
+# Set ASTRODASH_API_WRITES_ENABLED=true to re-enable.
+API_WRITES_ENABLED = os.getenv("ASTRODASH_API_WRITES_ENABLED", "false").lower() == "true"
+
+
+def api_writes_required(view_func):
+    """Return 403 if API write endpoints are disabled."""
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        if not API_WRITES_ENABLED:
+            return JsonResponse(
+                {"error": "API write endpoints are temporarily disabled."},
+                status=403,
+            )
+        return view_func(*args, **kwargs)
+    return wrapper
 
 from astrodash.config.logging import get_logger
 from astrodash.core.exceptions import (
@@ -127,6 +147,7 @@ def line_list_filter(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@api_writes_required
 def process_spectrum(request):
     try:
         params = _parse_params(request.POST.get("params"))
@@ -192,6 +213,7 @@ def process_spectrum(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@api_writes_required
 def estimate_redshift(request):
     file_obj = request.FILES.get("file")
     sn_type = request.POST.get("sn_type")
@@ -231,6 +253,7 @@ def estimate_redshift(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@api_writes_required
 def upload_model(request):
     model_file = request.FILES.get("file")
     class_mapping = request.POST.get("class_mapping")
@@ -307,6 +330,7 @@ def get_model_info_view(request, model_id: str):
 
 @csrf_exempt
 @require_http_methods(["DELETE"])
+@api_writes_required
 def delete_model(request, model_id: str):
     model_id = str(model_id)
     service = get_model_service()
@@ -319,6 +343,7 @@ def delete_model(request, model_id: str):
 
 @csrf_exempt
 @require_http_methods(["PUT"])
+@api_writes_required
 def update_model(request, model_id: str):
     model_id = str(model_id)
     service = get_model_service()
@@ -358,6 +383,7 @@ def list_models_by_owner(request, owner: str):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@api_writes_required
 def batch_process(request):
     try:
         params = _parse_params(request.POST.get("params"))
