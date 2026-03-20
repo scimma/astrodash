@@ -1,14 +1,10 @@
-# Interactive API Explorer
+# OpenAPI Specification
 
-Use the interactive Swagger UI to explore and test all Astrodash API endpoints.
+The AstroDash API is documented with an OpenAPI specification file:
 
-**Note:**
+- [openapi.json](openapi.json)
 
-The interactive Swagger UI is available when the AstroDash API server is running.
-Navigate to `/docs` on your running server instance to access the full interactive API explorer.
+You can import this file into tools like Postman, Insomnia, or any
+OpenAPI-compatible client for testing and exploration.
 
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
-- **OpenAPI JSON**: `http://localhost:8000/openapi.json`
-
-The OpenAPI specification defines all available endpoints, request/response schemas, and authentication requirements. You can import the `openapi.json` file into tools like Postman, Insomnia, or any OpenAPI-compatible client for testing.
+For endpoint details, see the [API endpoint documentation](endpoints/).
