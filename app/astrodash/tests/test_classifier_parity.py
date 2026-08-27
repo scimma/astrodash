@@ -21,15 +21,18 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from asgiref.sync import async_to_sync
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.signals import request_finished
 from django.db import close_old_connections
 from django.http import HttpResponse
 from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 
-from astrodash.forms import ClassifyForm, ModelSelectionForm
+from astrodash.forms import ClassifyForm, ModelSelectionForm, BatchForm, parse_redshift_csv
 from astrodash.infrastructure.ml import model_registry
-from astrodash.ui_views import _format_batch_results
+from astrodash.ui_views import _batch_run_metadata, _format_batch_results
+from astrodash.core.exceptions import ValidationException
+from astrodash.domain.services.batch_processing_service import BatchProcessingService
 from astrodash.domain.services.redshift_service import RedshiftService
 from astrodash.domain.services.spectrum_processing_service import (
     SpectrumProcessingService,
@@ -269,6 +272,198 @@ class BatchRlapParityTests(TestCase):
             self._results(), {"modelType": "dash", "calculateRlap": False}
         )
         self.assertEqual(out["a.dat"]["rlap"], "-")
+
+
+class BatchRunMetadataTests(TestCase):
+    """Run-level classification metadata is attached to every batch result row."""
+
+    def _params(self, **extra):
+        params = {
+            "smoothing": 6,
+            "minWave": 4000,
+            "maxWave": 8000,
+            "knownZ": False,
+            "zValue": None,
+            "calculateRlap": False,
+            "modelType": "dash",
+        }
+        params.update(extra)
+        return params
+
+    def test_missing_input_redshift_is_none(self):
+        meta = _batch_run_metadata("dash", self._params(), classified_at="2026-08-27T04:00:00+00:00")
+        self.assertIsNone(meta["input_redshift"])
+        self.assertEqual(meta["model_type"], "dash")
+        self.assertEqual(meta["smoothing"], 6)
+        self.assertEqual(meta["min_wave"], 4000)
+        self.assertEqual(meta["max_wave"], 8000)
+        self.assertEqual(meta["classified_at"], "2026-08-27T04:00:00+00:00")
+
+    def test_submitted_input_redshift_is_preserved(self):
+        meta = _batch_run_metadata(
+            "transformer", self._params(zValue=0.05), classified_at="t"
+        )
+        self.assertEqual(meta["input_redshift"], 0.05)
+        self.assertEqual(meta["model_type"], "transformer")
+
+    def test_user_uploaded_model_type_is_not_rewritten_to_dash(self):
+        # params['modelType'] is a display fallback of 'dash' for user models;
+        # recorded metadata must keep the selected type.
+        meta = _batch_run_metadata(
+            "user_uploaded", self._params(modelType="dash"), classified_at="t"
+        )
+        self.assertEqual(meta["model_type"], "user_uploaded")
+
+    def test_metadata_is_copied_onto_success_and_error_rows(self):
+        results = {
+            "ok.dat": {
+                "classification": {
+                    "best_match": {
+                        "type": "Ia",
+                        "age": "2 to 6",
+                        "probability": 0.9,
+                        "redshift": 0.01,
+                    }
+                }
+            },
+            "bad.xyz": {"error": "Unsupported file type"},
+        }
+        meta = _batch_run_metadata(
+            "dash", self._params(zValue=0.12), classified_at="2026-08-27T04:00:00+00:00"
+        )
+        out = _format_batch_results(results, self._params(), metadata=meta)
+        for filename in ("ok.dat", "bad.xyz"):
+            self.assertEqual(out[filename]["classified_at"], "2026-08-27T04:00:00+00:00")
+            self.assertEqual(out[filename]["model_type"], "dash")
+            self.assertEqual(out[filename]["smoothing"], 6)
+            self.assertEqual(out[filename]["min_wave"], 4000)
+            self.assertEqual(out[filename]["max_wave"], 8000)
+            self.assertEqual(out[filename]["input_redshift"], 0.12)
+        self.assertEqual(out["ok.dat"]["type"], "Ia")
+        self.assertEqual(out["bad.xyz"]["error"], "Unsupported file type")
+
+    def test_batch_view_exposes_run_metadata_on_the_page_and_rows(self):
+        session = self.client.session
+        session["selected_model_type"] = "dash"
+        session.save()
+        fake_results = {
+            "a.dat": {
+                "classification": {
+                    "best_match": {
+                        "type": "Ia",
+                        "age": "2 to 6",
+                        "probability": 0.9,
+                        "redshift": 0.01,
+                    }
+                }
+            }
+        }
+        upload = SimpleUploadedFile("a.dat", b"3500 1.0\n3600 1.1\n")
+        batch_svc = MagicMock(process_batch=AsyncMock(return_value=fake_results))
+        with patch(
+            "astrodash.ui_views.get_batch_processing_service", return_value=batch_svc
+        ):
+            resp = self.client.post(
+                reverse("astrodash:batch_process_ui"),
+                data={
+                    "smoothing": 6,
+                    "min_wave": 4000,
+                    "max_wave": 8000,
+                    "redshift": 0.03,
+                    "files": upload,
+                },
+            )
+        self.assertEqual(resp.status_code, 200)
+        meta = resp.context["run_metadata"]
+        self.assertEqual(meta["model_type"], "dash")
+        self.assertEqual(meta["smoothing"], 6)
+        self.assertEqual(meta["min_wave"], 4000)
+        self.assertEqual(meta["max_wave"], 8000)
+        self.assertEqual(meta["input_redshift"], 0.03)
+        self.assertTrue(meta["classified_at"])
+        row = resp.context["results"]["a.dat"]
+        self.assertEqual(row["model_type"], "dash")
+        self.assertEqual(row["input_redshift"], 0.03)
+        html = resp.content.decode()
+        self.assertIn("Classification metadata", html)
+        self.assertIn("Classified at", html)
+        self.assertIn("Input redshift", html)
+        self.assertIn("'Classified At'", html)
+        self.assertIn("'Input Redshift'", html)
+
+
+class BatchRedshiftCsvTests(TestCase):
+    """Batch redshift is a CSV list, one value per spectrum, lengths must match."""
+
+    def test_parse_redshift_csv_accepts_list_or_single_value(self):
+        self.assertEqual(parse_redshift_csv("[1, 0.01, 0.1]"), [1.0, 0.01, 0.1])
+        self.assertEqual(parse_redshift_csv("0.01, 0.1"), [0.01, 0.1])
+        self.assertEqual(parse_redshift_csv("0.03"), [0.03])
+        self.assertEqual(parse_redshift_csv(""), [])
+        self.assertEqual(parse_redshift_csv(None), [])
+
+    def test_batch_form_parses_csv_list(self):
+        form = BatchForm(
+            data={
+                "smoothing": 0,
+                "min_wave": 3500,
+                "max_wave": 10000,
+                "redshift": "[0.01, 0.02]",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["redshift"], [0.01, 0.02])
+
+    def test_process_file_list_applies_redshifts_in_order(self):
+        calls = []
+
+        async def get_spectrum(file):
+            return SimpleNamespace(
+                x=[1.0], y=[1.0], file_name=file.name, redshift=None, meta={}
+            )
+
+        async def process(spec, params):
+            calls.append((spec.file_name, params.get("zValue")))
+            spec.redshift = params.get("zValue")
+            return spec
+
+        classification_svc = MagicMock()
+        classification_svc.model_factory.get_classifier = MagicMock(return_value=object())
+        classification_svc.classify_spectrum = AsyncMock(
+            return_value=SimpleNamespace(results={"best_match": {}})
+        )
+        svc = BatchProcessingService(
+            MagicMock(get_spectrum_from_file=get_spectrum),
+            classification_svc,
+            MagicMock(process_spectrum_with_params=process),
+        )
+        files = [
+            SimpleUploadedFile("a.dat", b"1 1"),
+            SimpleUploadedFile("b.dat", b"1 1"),
+        ]
+        out = async_to_sync(svc.process_batch)(
+            files, {"zValues": [0.1, 0.2], "smoothing": 0}, "dash"
+        )
+        self.assertEqual(dict(calls), {"a.dat": 0.1, "b.dat": 0.2})
+        self.assertEqual(out["a.dat"]["applied_redshift"], 0.1)
+        self.assertEqual(out["b.dat"]["applied_redshift"], 0.2)
+
+    def test_mismatched_redshift_and_spectrum_counts_fail(self):
+        classification_svc = MagicMock()
+        classification_svc.model_factory.get_classifier = MagicMock(return_value=object())
+        svc = BatchProcessingService(
+            MagicMock(), classification_svc, MagicMock()
+        )
+        files = [
+            SimpleUploadedFile("a.dat", b"1 1"),
+            SimpleUploadedFile("b.dat", b"1 1"),
+        ]
+        with self.assertRaises(ValidationException) as ctx:
+            async_to_sync(svc.process_batch)(
+                files, {"zValues": [0.1], "smoothing": 0}, "dash"
+            )
+        self.assertIn("1 redshift", str(ctx.exception.message))
+        self.assertIn("2 spectrum", str(ctx.exception.message))
 
 
 class RedshiftEstimationGateParityTests(TestCase):

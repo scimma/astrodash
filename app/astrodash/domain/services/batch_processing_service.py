@@ -12,6 +12,24 @@ from astrodash.core.exceptions import BatchProcessingException, ValidationExcept
 
 logger = get_logger(__name__)
 
+REDSHIFT_COUNT_MISMATCH_MESSAGE = (
+    "Got {n_redshifts} redshift(s) but {n_spectra} spectrum file(s). "
+    "Provide one redshift per spectrum."
+)
+
+
+def _zvalues_for_batch(params: Dict[str, Any], n_spectra: int) -> list:
+    """Return per-spectrum redshifts, or raise if a list was given with the wrong length."""
+    z_values = params.get("zValues") or []
+    if z_values and len(z_values) != n_spectra:
+        raise ValidationException(
+            REDSHIFT_COUNT_MISMATCH_MESSAGE.format(
+                n_redshifts=len(z_values), n_spectra=n_spectra
+            )
+        )
+    return z_values
+
+
 class BatchProcessingService:
     """
     Service for handling batch processing of spectrum files.
@@ -111,23 +129,30 @@ class BatchProcessingService:
                     logger.error(f"Error reading file {fname}: {e}")
                     results[fname] = {"error": str(e)}
 
+        z_values = _zvalues_for_batch(params, len(entries))
+
         # Concurrency for processing prepared entries
         if entries:
             max_concurrency = min(8, len(entries))
             semaphore = asyncio.Semaphore(max_concurrency)
 
-            async def worker_zip(name: str, file_like_obj: Any) -> None:
+            async def worker_zip(index: int, name: str, file_like_obj: Any) -> None:
                 async with semaphore:
                     try:
+                        file_params = dict(params)
+                        if z_values:
+                            file_params["zValue"] = z_values[index]
                         result = await self._process_single_file(
-                            file_like_obj, name, params, model_type, model_id, classifier
+                            file_like_obj, name, file_params, model_type, model_id, classifier
                         )
                         results[name] = result
                     except Exception as e:
                         logger.error(f"Error processing file {name}: {e}")
                         results[name] = {"error": str(e)}
 
-            await asyncio.gather(*(worker_zip(n, f) for n, f in entries))
+            await asyncio.gather(
+                *(worker_zip(i, n, f) for i, (n, f) in enumerate(entries))
+            )
 
         logger.info(f"Zip processing completed. Processed {len(results)} files.")
         return results
@@ -154,25 +179,37 @@ class BatchProcessingService:
             model_type, model_id if model_type == "user_uploaded" else None
         )
 
-        max_concurrency = min(8, max(1, len(files)))
-        semaphore = asyncio.Semaphore(max_concurrency)
-
-        async def worker(single_file: Any) -> None:
+        entries: List[tuple] = []
+        for single_file in files:
             filename_local = getattr(single_file, 'name', getattr(single_file, 'filename', 'unknown'))
             if not filename_local.lower().endswith(self.supported_extensions):
                 results[filename_local] = {"error": "Unsupported file type"}
-                return
-            async with semaphore:
-                try:
-                    result_local = await self._process_single_file(
-                        single_file, filename_local, params, model_type, model_id, classifier
-                    )
-                    results[filename_local] = result_local
-                except Exception as e:
-                    logger.error(f"Error processing file {filename_local}: {e}")
-                    results[filename_local] = {"error": str(e)}
+                continue
+            entries.append((filename_local, single_file))
 
-        await asyncio.gather(*(worker(f) for f in files))
+        z_values = _zvalues_for_batch(params, len(entries))
+
+        if entries:
+            max_concurrency = min(8, max(1, len(entries)))
+            semaphore = asyncio.Semaphore(max_concurrency)
+
+            async def worker(index: int, filename_local: str, single_file: Any) -> None:
+                async with semaphore:
+                    try:
+                        file_params = dict(params)
+                        if z_values:
+                            file_params["zValue"] = z_values[index]
+                        result_local = await self._process_single_file(
+                            single_file, filename_local, file_params, model_type, model_id, classifier
+                        )
+                        results[filename_local] = result_local
+                    except Exception as e:
+                        logger.error(f"Error processing file {filename_local}: {e}")
+                        results[filename_local] = {"error": str(e)}
+
+            await asyncio.gather(
+                *(worker(i, n, f) for i, (n, f) in enumerate(entries))
+            )
 
         logger.info(f"File list processing completed. Processed {len(results)} files.")
         return results
@@ -237,7 +274,8 @@ class BatchProcessingService:
                 },
                 "classification": result.results,
                 "model_type": model_type,
-                "model_id": model_id if model_type == "user_uploaded" else None
+                "model_id": model_id if model_type == "user_uploaded" else None,
+                "applied_redshift": params.get("zValue"),
             }
 
         except Exception as e:
