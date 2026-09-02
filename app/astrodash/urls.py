@@ -18,6 +18,7 @@ urlpatterns = [
     path("model-access/<str:token>/", ui_views.model_gate, name="model_gate"),
     path("classify/", ui_views.classify, name="classify"),
     path("batch/", ui_views.batch_process, name="batch_process_ui"),
+    path("leaderboard/", ui_views.leaderboard, name="leaderboard"),
     path("team/", ui_views.team_members, name="team_members"),
     path("classify/twins/", ui_views.dash_twins, name="dash_twins"),
     path("classify/twins/data/", ui_views.dash_twins_data, name="dash_twins_data"),

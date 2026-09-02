@@ -28,9 +28,14 @@ multipart/form-data
 | `params` | String (JSON) | Yes | Processing parameters as JSON string (see `/process` endpoint). Must include `modelType` unless `model_id` is supplied. |
 
 The `params` JSON must include `modelType` (one of the active built-in model
-ids, currently `dash` or `transformer`) unless a `model_id` is supplied. An
-omitted, unknown, or retired `modelType` returns `400`, validated against the
-model registry's active definitions -- the same contract as `/process`.
+ids: `dash`, `transformer`, `1dCNN_z`, `1dCNN_noz`, `latent_z`, `latent_noz`)
+unless a `model_id` is supplied. An omitted, unknown, or retired `modelType`
+returns `400`, validated against the model registry's active definitions --
+the same contract as `/process`. Redshift rules and label spaces match
+[Process Spectrum](process-spectrum.md#built-in-models): `1dCNN_z` and
+`latent_z` require redshift; `1dCNN_noz` and `latent_noz` do not take redshift
+as an input; those four return the five-class set `SN Ia`, `SN Ib/c`, `SN II`,
+`SN IIn`, `SLSN-I` (not DASH type+age templates).
 
 ## Response
 

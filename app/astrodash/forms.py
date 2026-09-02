@@ -351,6 +351,24 @@ class MultipleFileField(forms.FileField):
         # If a single file slips through, still return a list for consistency.
         return [super().clean(data, initial)]
 
+
+def parse_redshift_csv(value) -> list:
+    """Parse one redshift or a CSV list such as ``[0.01, 0.1]``."""
+    if value is None:
+        return []
+    text = str(value).strip()
+    if text == "":
+        return []
+    if not text.startswith("["):
+        text = f"[{text}]"
+    parsed = ast.literal_eval(text)
+    if isinstance(parsed, (int, float)):
+        return [float(parsed)]
+    if not isinstance(parsed, (list, tuple)):
+        raise ValueError("Enter redshifts as a list, e.g. [0.01, 0.1].")
+    return [float(x) for x in parsed]
+
+
 class BatchForm(forms.Form):
     # Support for both zip and multiple files
     zip_file = forms.FileField(
@@ -394,9 +412,10 @@ class BatchForm(forms.Form):
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
     )
     
-    redshift = forms.FloatField(
+    redshift = forms.CharField(
         required=False,
-        widget=forms.NumberInput(attrs={'class': 'form-control', 'step': 'any'})
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': '[0.01, 0.1]'}),
+        help_text="One redshift per spectrum, in order, e.g. [0.01, 0.1, 0.2].",
     )
 
     calculate_rlap = forms.BooleanField(
@@ -406,6 +425,13 @@ class BatchForm(forms.Form):
         help_text="Only available for Dash model",
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
     )
+
+    def clean_redshift(self):
+        raw = self.cleaned_data.get('redshift')
+        try:
+            return parse_redshift_csv(raw)
+        except (ValueError, SyntaxError, TypeError):
+            raise forms.ValidationError("Enter redshifts as a list, e.g. [0.01, 0.1].")
 
     def clean(self):
         cleaned_data = super().clean()
@@ -422,9 +448,9 @@ class BatchForm(forms.Form):
              pass 
 
         known_z = cleaned_data.get('known_z')
-        redshift = cleaned_data.get('redshift')
+        redshifts = cleaned_data.get('redshift') or []
 
-        if known_z and redshift is None:
+        if known_z and not redshifts:
             self.add_error('redshift', "Redshift is required when 'Known Redshift' is checked.")
 
         return cleaned_data

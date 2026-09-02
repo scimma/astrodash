@@ -1,7 +1,12 @@
 from typing import Dict, Any, Optional, Tuple
 from astrodash.domain.models.spectrum import Spectrum
-from astrodash.infrastructure.ml.data_processor import DashSpectrumProcessor, TransformerSpectrumProcessor
-from astrodash.infrastructure.ml.model_registry import get_definition
+from astrodash.infrastructure.ml.data_processor import (
+    DashSpectrumProcessor,
+    LatentEncoderSpectrumProcessor,
+    OnedCnnSpectrumProcessor,
+    TransformerSpectrumProcessor,
+)
+from astrodash.infrastructure.ml.model_registry import REDSHIFT_INPUT_REQUIRED, get_definition
 from astrodash.shared.utils.helpers import interpolate_to_1024, normalise_spectrum
 from astrodash.config.settings import Settings, get_settings
 from astrodash.config.logging import get_logger
@@ -26,6 +31,10 @@ class SpectrumProcessingService:
         self.transformer_processor = TransformerSpectrumProcessor(
             target_length=self.settings.nw
         )
+        self.oned_cnn_processor = OnedCnnSpectrumProcessor(
+            processor=self.dash_processor
+        )
+        self.latent_processor = LatentEncoderSpectrumProcessor()
         logger.debug("SpectrumProcessingService initialized with settings")
 
     async def process_spectrum_with_params(
@@ -185,16 +194,20 @@ class SpectrumProcessingService:
         self,
         spectrum: Spectrum,
         model_type: str
-    ) -> Dict[str, np.ndarray]:
+    ) -> Dict[str, Any]:
         """
         Prepare spectrum data for model input.
 
         Args:
             spectrum: Spectrum to prepare
-            model_type: Type of model ('dash' for DASH, 'transformer' for Transformer, 'user_uploaded')
+            model_type: Type of model. Processor selection uses
+                ``get_definition(model_type).preprocessing``, not a model-id
+                comparison.
 
         Returns:
-            Dictionary with prepared data
+            Dictionary with prepared data. website_final branches also include
+            ``model_input`` (length-1025 ndarray for ``1dcnn``; flux/wavelength/mask
+            dict for ``latent``).
         """
         try:
             x = np.array(spectrum.x)
@@ -233,6 +246,30 @@ class SpectrumProcessingService:
                     'x': processed_x,
                     'y': processed_y,
                     'redshift': processed_z
+                }
+
+            elif preprocessing == '1dcnn':
+                include_redshift = definition.redshift_input == REDSHIFT_INPUT_REQUIRED
+                model_input = self.oned_cnn_processor.process(
+                    x, y, z, include_redshift=include_redshift
+                )
+                return {
+                    'x': x,
+                    'y': model_input,
+                    'redshift': z,
+                    'model_input': model_input,
+                }
+
+            elif preprocessing == 'latent':
+                deredshift = definition.redshift_input == REDSHIFT_INPUT_REQUIRED
+                model_input = self.latent_processor.process(
+                    x, y, z, deredshift=deredshift
+                )
+                return {
+                    'x': model_input['wavelength'],
+                    'y': model_input['flux'],
+                    'redshift': z,
+                    'model_input': model_input,
                 }
 
             else:

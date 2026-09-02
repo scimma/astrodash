@@ -35,14 +35,29 @@ The `params` parameter accepts a JSON string with the following fields:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `modelType` | String | \- | Classifier to use. **Required** unless `model_id` is supplied. Must be one of the active built-in model ids (currently `dash` or `transformer`); an omitted, unknown, or retired value returns `400`. The valid values track the model registry, so they change as models are added or retired. |
+| `modelType` | String | \- | Classifier to use. **Required** unless `model_id` is supplied. Must be one of the active built-in model ids (`dash`, `transformer`, `1dCNN_z`, `1dCNN_noz`, `latent_z`, `latent_noz`); an omitted, unknown, or retired value returns `400`. The valid values track the model registry, so they change as models are added or retired. See [Built-in models](#built-in-models). |
 | `oscRef` | String | \- | SN name on Open Supernova Catalog (e.g., "sn2002er") |
 | `smoothing` | Integer | 0 | Smoothing parameter |
-| `knownZ` | Boolean | false | Whether redshift is known |
-| `zValue` | Float | \- | Redshift value (required if knownZ=true) |
+| `knownZ` | Boolean | false | Whether redshift is known. Required (with `zValue`) for `transformer`, `1dCNN_z`, and `latent_z`. Not used as a model input for `1dCNN_noz` or `latent_noz`. Optional for `dash`. |
+| `zValue` | Float | \- | Redshift value (required if `knownZ` is true, and for models that require redshift as an input) |
 | `minWave` | Float | \- | Minimum wavelength in Angstroms |
 | `maxWave` | Float | \- | Maximum wavelength in Angstroms |
-| `calculateRlap` | Boolean | false | Whether to calculate RLAP values |
+| `calculateRlap` | Boolean | false | Whether to calculate RLAP values (DASH only) |
+
+### Built-in models
+
+All of the following ids are **public** (listed, ungated). Send them as `params.modelType` the same way as `dash` or `transformer`.
+
+| `modelType` | Redshift as input | Labels |
+|-------------|-------------------|--------|
+| `dash` | Optional | DASH type + age-bin templates (for example `Ia-norm` with an `age_bin`) |
+| `transformer` | Required | Transformer class names |
+| `1dCNN_z` | Required | Five classes: `SN Ia`, `SN Ib/c`, `SN II`, `SN IIn`, `SLSN-I` |
+| `1dCNN_noz` | Not an input | Same five classes |
+| `latent_z` | Required | Same five classes |
+| `latent_noz` | Not an input | Same five classes |
+
+`1dCNN_*` and `latent_*` are not the original DASH type+age template stack. They do not return DASH age bins, twins, or RLAP.
 
 ## Response
 
@@ -184,8 +199,10 @@ The classification includes:
 - **Top Match**: Highest confidence supernova type
 - **Confidence**: Probability score (0-1)
 - **All Matches**: Complete list of predictions with scores
-- **Age Bins**: Temporal classification within each type
-- **RLAP Values**: Relative likelihood ratios (if calculated)
+- **Age Bins** (`dash` only): Temporal classification within each DASH type
+- **RLAP Values** (`dash` only, if `calculateRlap` is true): Relative likelihood ratios
+
+For `1dCNN_z`, `1dCNN_noz`, `latent_z`, and `latent_noz`, `best_matches[].type` is one of `SN Ia`, `SN Ib/c`, `SN II`, `SN IIn`, `SLSN-I`.
 
 ## Notes
 

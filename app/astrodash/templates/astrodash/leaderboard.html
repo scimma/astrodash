@@ -1,0 +1,266 @@
+{% extends "astrodash/base.html" %}
+{% load static %}
+
+{% block title %}Leaderboard — Astrodash{% endblock %}
+
+{% block content %}
+<style>
+  .leaderboard-page {
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .leaderboard-page .page-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: #212529;
+    letter-spacing: -0.02em;
+  }
+  .leaderboard-page .page-lead {
+    font-size: 0.95rem;
+    color: #6c757d;
+    max-width: 46rem;
+    line-height: 1.5;
+  }
+  .leaderboard-page .stat-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #6c757d;
+    margin-bottom: 0.25rem;
+  }
+  .leaderboard-page .stat-value {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #212529;
+  }
+  .leaderboard-page .challenge-card .card-header {
+    background-color: #2a6496;
+  }
+  .leaderboard-page .rank-cell {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    width: 3.5rem;
+  }
+  .leaderboard-page .rank-1 { color: #b8860b; }
+  .leaderboard-page .rank-2 { color: #6c757d; }
+  .leaderboard-page .rank-3 { color: #a0522d; }
+  .leaderboard-page .model-swatch {
+    display: inline-block;
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 2px;
+    margin-right: 0.4rem;
+    vertical-align: middle;
+  }
+  .leaderboard-page .delta-up { color: #28a745; }
+  .leaderboard-page .delta-down { color: #dc3545; }
+  .leaderboard-page .delta-flat { color: #6c757d; }
+  .leaderboard-page .metric {
+    font-variant-numeric: tabular-nums;
+  }
+  .leaderboard-page .section-heading {
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #6c757d;
+    border-bottom: 1px solid #dee2e6;
+    padding-bottom: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .leaderboard-page .howto-list,
+  #scoringHelpModal .howto-list {
+    font-size: 0.9rem;
+    color: #495057;
+    line-height: 1.55;
+    padding-left: 1.15rem;
+    margin-bottom: 0;
+  }
+  .leaderboard-page .howto-list li + li,
+  #scoringHelpModal .howto-list li + li {
+    margin-top: 0.4rem;
+  }
+  .leaderboard-page .mock-banner {
+    font-size: 0.85rem;
+  }
+  .leaderboard-page .help-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 0;
+  }
+  .leaderboard-page .help-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid #2a6496;
+    background: #fff;
+    color: #2a6496;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .leaderboard-page .help-btn:hover,
+  .leaderboard-page .help-btn:focus {
+    background-color: #2a6496;
+    color: #fff;
+    outline: none;
+  }
+</style>
+
+<main class="leaderboard-page py-4 px-2 px-md-3 bg-white">
+  <header class="mb-3 pb-2 border-bottom border-light">
+    <div class="d-flex flex-wrap align-items-start justify-content-between">
+      <div>
+        <h1 class="page-title mb-2">Model Leaderboard</h1>
+        <p class="page-lead mb-0">
+          Every active model is scored on the set of newly uploaded spectra to
+          WISeREP in the given month. Rankings refresh monthly.
+        </p>
+      </div>
+      <div class="mt-2 mt-md-0 ml-md-3">
+        <label class="stat-label d-block" for="challenge-month">Challenge month</label>
+        <select id="challenge-month" class="form-control form-control-sm" style="min-width: 10rem;" disabled title="Mock UI — month switching not wired yet">
+          {% for month in available_months %}
+          <option value="{{ month }}" {% if month == selected_month %}selected{% endif %}>{{ month }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </header>
+
+  {% if is_mock %}
+  <div class="alert alert-info mock-banner mb-4" role="status">
+    <i class="bi bi-info-circle"></i>
+    <strong>UI sketch.</strong> Rankings and challenge stats below are placeholder data —
+    evaluation is not connected yet.
+  </div>
+  {% endif %}
+
+  <!-- Current challenge summary -->
+  <div class="card shadow-sm challenge-card mb-4">
+    <div class="card-header text-white d-flex flex-wrap align-items-center justify-content-between">
+      <h5 class="mb-0">
+        <i class="bi bi-calendar3"></i>
+        {{ challenge.month_label }} Challenge
+      </h5>
+      <span class="badge badge-light text-dark">{{ challenge.status }}</span>
+    </div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-6 col-md-4 mb-3 mb-md-0">
+          <div class="stat-label">Blind spectra</div>
+          <div class="stat-value">{{ challenge.spectra_count }}</div>
+        </div>
+        <div class="col-6 col-md-4 mb-3 mb-md-0">
+          <div class="stat-label">Eval window</div>
+          <div class="stat-value" style="font-size: 1rem;">{{ challenge.eval_window }}</div>
+        </div>
+        <div class="col-6 col-md-4">
+          <div class="stat-label">Next challenge</div>
+          <div class="stat-value" style="font-size: 1rem;">{{ challenge.next_challenge }}</div>
+        </div>
+      </div>
+      <p class="text-muted mb-0 mt-3" style="font-size: 0.875rem;">
+        {{ challenge.blind_set_note }}
+      </p>
+    </div>
+  </div>
+
+  <!-- Standings -->
+  <h2 class="section-heading">Standings</h2>
+  <div class="card shadow-sm mb-4">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-striped table-hover table-bordered mb-0">
+          <thead class="thead-dark">
+            <tr>
+              <th scope="col">Rank</th>
+              <th scope="col">Model</th>
+              <th scope="col" class="text-right">MicroF1</th>
+              <th scope="col" class="text-right">ROC</th>
+              <th scope="col" class="text-right">Accuracy</th>
+              <th scope="col" class="text-right">Vs. Prev</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rankings %}
+            <tr>
+              <td class="rank-cell rank-{{ row.rank }}">
+                {% if row.rank == 1 %}<i class="bi bi-trophy-fill"></i>{% endif %}
+                #{{ row.rank }}
+              </td>
+              <td>
+                <span class="model-swatch" style="background-color: {{ row.color }};"></span>
+                {{ row.model }}
+              </td>
+              <td class="text-right metric">{{ row.micro_f1|floatformat:3 }}</td>
+              <td class="text-right metric">{{ row.roc|floatformat:3 }}</td>
+              <td class="text-right metric"><strong>{{ row.accuracy }}%</strong></td>
+              <td class="text-right metric">
+                {% if row.delta > 0 %}
+                <span class="delta-up"><i class="bi bi-arrow-up-short"></i>+{{ row.delta }}%</span>
+                {% elif row.delta < 0 %}
+                <span class="delta-down"><i class="bi bi-arrow-down-short"></i>{{ row.delta }}%</span>
+                {% else %}
+                <span class="delta-flat">0.0%</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="6" class="text-center text-muted py-4">No rankings for this month yet.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex align-items-center mb-4">
+    <h2 class="section-heading help-heading mb-0">How scoring works</h2>
+    <button
+      type="button"
+      class="help-btn ml-2"
+      data-toggle="modal"
+      data-target="#scoringHelpModal"
+      aria-label="How scoring works"
+      title="How scoring works"
+    >?</button>
+  </div>
+</main>
+
+<div class="modal fade" id="scoringHelpModal" tabindex="-1" role="dialog" aria-labelledby="scoringHelpModalLabel" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="scoringHelpModalLabel">How scoring works</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <ol class="howto-list">
+          <li>Each month, spectra newly uploaded to <a href="https://www.wiserep.org/" target="_blank" rel="noopener noreferrer">WISeREP</a> form the evaluation set.</li>
+          <li>Models are ranked by <strong>MicroF1</strong>, with ROC and Accuracy reported for context.</li>
+          <li>Rankings refresh monthly when the challenge window closes.</li>
+          <li>Consult the paper for instructions on how to upload a model.</li>
+        </ol>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

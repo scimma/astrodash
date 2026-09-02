@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field, AnyUrl, field_validator, model_validator
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
 import os
 
 
@@ -62,6 +62,64 @@ class Settings(BaseSettings):
     transformer_model_path: str = Field("/mnt/astrodash-data/pre_trained_models/transformer/TF_wiserep_v6.pt",
                                         env="ASTRODASH_TRANSFORMER_MODEL_PATH")
 
+    # website_final 1D CNN / latent (local astrodash-web paths for host runserver + compose binds)
+    oned_cnn_z_model_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/dash_z/model.pth",
+        env="ASTRODASH_1DCNN_Z_MODEL_PATH",
+    )
+    oned_cnn_z_class_mapping_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/dash_z/class_mapping.json",
+        env="ASTRODASH_1DCNN_Z_CLASS_MAPPING_PATH",
+    )
+    oned_cnn_z_training_config_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/dash_z/training_config.json",
+        env="ASTRODASH_1DCNN_Z_TRAINING_CONFIG_PATH",
+    )
+    oned_cnn_noz_model_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/dash_noz/model.pth",
+        env="ASTRODASH_1DCNN_NOZ_MODEL_PATH",
+    )
+    oned_cnn_noz_class_mapping_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/dash_noz/class_mapping.json",
+        env="ASTRODASH_1DCNN_NOZ_CLASS_MAPPING_PATH",
+    )
+    oned_cnn_noz_training_config_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/dash_noz/training_config.json",
+        env="ASTRODASH_1DCNN_NOZ_TRAINING_CONFIG_PATH",
+    )
+    latent_z_encoder_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/wiserep_henna/try_5/Dered36_5/best_ckpt.pt",
+        env="ASTRODASH_LATENT_Z_ENCODER_PATH",
+    )
+    latent_z_encoder_cfg_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/wiserep_henna/try_5/Dered36_5/cfg_used.json",
+        env="ASTRODASH_LATENT_Z_ENCODER_CFG_PATH",
+    )
+    latent_z_classifier_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/latent_z/classifier_best.pt",
+        env="ASTRODASH_LATENT_Z_CLASSIFIER_PATH",
+    )
+    latent_z_classifier_cfg_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/latent_z/cfg_used.json",
+        env="ASTRODASH_LATENT_Z_CLASSIFIER_CFG_PATH",
+    )
+    latent_noz_encoder_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/wiserep_henna/try_5_noz/Nodered36_5/best_ckpt.pt",
+        env="ASTRODASH_LATENT_NOZ_ENCODER_PATH",
+    )
+    latent_noz_encoder_cfg_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/wiserep_henna/try_5_noz/Nodered36_5/cfg_used.json",
+        env="ASTRODASH_LATENT_NOZ_ENCODER_CFG_PATH",
+    )
+    latent_noz_classifier_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/latent_noz/classifier_best.pt",
+        env="ASTRODASH_LATENT_NOZ_CLASSIFIER_PATH",
+    )
+    latent_noz_classifier_cfg_path: str = Field(
+        "/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final/latent_noz/cfg_used.json",
+        env="ASTRODASH_LATENT_NOZ_CLASSIFIER_CFG_PATH",
+    )
+
     # Template and Line List Paths (External data directory)
     # Resolved in model_validator when default path is missing (e.g. dev without /mnt/astrodash-data)
     template_path: str = Field("/mnt/astrodash-data/pre_trained_models/templates/sn_and_host_templates.npz",
@@ -90,6 +148,82 @@ class Settings(BaseSettings):
     transformer_dropout: float = Field(0.1, env="ASTRODASH_TRANSFORMER_DROPOUT")
     transformer_selfattn: bool = Field(False, env="ASTRODASH_TRANSFORMER_SELFATTN")
 
+    # 1D CNN / latent — architecture frozen with the checkpoints
+    website_final_label_mapping: Dict[str, int] = Field(
+        {"SN Ia": 0, "SN Ib/c": 1, "SN II": 2, "SN IIn": 3, "SLSN-I": 4},
+        env="ASTRODASH_WEBSITE_FINAL_LABEL_MAPPING",
+    )
+    latent_encoder_n_wave: int = Field(1320, env="ASTRODASH_LATENT_ENCODER_N_WAVE")
+    latent_encoder_lam_min: float = Field(3200.0, env="ASTRODASH_LATENT_ENCODER_LAM_MIN")
+    latent_encoder_lam_max: float = Field(9800.0, env="ASTRODASH_LATENT_ENCODER_LAM_MAX")
+    latent_encoder_dlam: float = Field(5.0, env="ASTRODASH_LATENT_ENCODER_DLAM")
+    latent_encoder_min_finite_bins: int = Field(
+        50, env="ASTRODASH_LATENT_ENCODER_MIN_FINITE_BINS"
+    )
+    latent_encoder_flux_clip: float = Field(50.0, env="ASTRODASH_LATENT_ENCODER_FLUX_CLIP")
+    latent_encoder_bottleneck_length: int = Field(
+        16, env="ASTRODASH_LATENT_ENCODER_BOTTLENECK_LENGTH"
+    )
+    latent_encoder_bottleneck_dim: int = Field(
+        64, env="ASTRODASH_LATENT_ENCODER_BOTTLENECK_DIM"
+    )
+    latent_encoder_model_dim: int = Field(128, env="ASTRODASH_LATENT_ENCODER_MODEL_DIM")
+    latent_encoder_num_heads: int = Field(4, env="ASTRODASH_LATENT_ENCODER_NUM_HEADS")
+    latent_encoder_num_layers: int = Field(4, env="ASTRODASH_LATENT_ENCODER_NUM_LAYERS")
+    latent_encoder_ff_dim: int = Field(256, env="ASTRODASH_LATENT_ENCODER_FF_DIM")
+    latent_encoder_dropout: float = Field(0.15, env="ASTRODASH_LATENT_ENCODER_DROPOUT")
+    latent_encoder_selfattn: bool = Field(False, env="ASTRODASH_LATENT_ENCODER_SELFATTN")
+    latent_encoder_concat: bool = Field(True, env="ASTRODASH_LATENT_ENCODER_CONCAT")
+    latent_encoder_cross_attn_only: bool = Field(
+        False, env="ASTRODASH_LATENT_ENCODER_CROSS_ATTN_ONLY"
+    )
+    latent_encoder_hidden_len: int = Field(256, env="ASTRODASH_LATENT_ENCODER_HIDDEN_LEN")
+    latent_mlp_head_hidden: int = Field(256, env="ASTRODASH_LATENT_MLP_HEAD_HIDDEN")
+    latent_mlp_head_dropout: float = Field(0.25, env="ASTRODASH_LATENT_MLP_HEAD_DROPOUT")
+
+    def oned_cnn_input_length(self) -> int:
+        return self.nw + 1
+
+    def website_final_idx_to_label(self) -> Dict[int, str]:
+        return {idx: name for name, idx in self.website_final_label_mapping.items()}
+
+    def website_final_class_names(self) -> List[str]:
+        return [
+            name
+            for name, _ in sorted(
+                self.website_final_label_mapping.items(), key=lambda item: item[1]
+            )
+        ]
+
+    def latent_encoder_latent_flat(self) -> int:
+        return self.latent_encoder_bottleneck_length * self.latent_encoder_bottleneck_dim
+
+    def latent_encoder_ctor_kwargs(self) -> Dict[str, Any]:
+        return {
+            "bottleneck_length": self.latent_encoder_bottleneck_length,
+            "bottleneck_dim": self.latent_encoder_bottleneck_dim,
+            "model_dim": self.latent_encoder_model_dim,
+            "num_heads": self.latent_encoder_num_heads,
+            "num_layers": self.latent_encoder_num_layers,
+            "ff_dim": self.latent_encoder_ff_dim,
+            "dropout": self.latent_encoder_dropout,
+            "selfattn": self.latent_encoder_selfattn,
+            "concat": self.latent_encoder_concat,
+            "cross_attn_only": self.latent_encoder_cross_attn_only,
+            "hidden_len": self.latent_encoder_hidden_len,
+        }
+
+    def latent_encoder_wavelength_grid(self) -> List[float]:
+        nbins = int(
+            (self.latent_encoder_lam_max - self.latent_encoder_lam_min)
+            / self.latent_encoder_dlam
+        )
+        edges = [
+            self.latent_encoder_lam_min + self.latent_encoder_dlam * i
+            for i in range(nbins + 1)
+        ]
+        return [0.5 * (edges[i] + edges[i + 1]) for i in range(nbins)]
+
     # User model parameters
     user_model_reliability_threshold: float = Field(0.5, env="ASTRODASH_USER_MODEL_RELIABILITY_THRESHOLD")
 
@@ -113,17 +247,15 @@ class Settings(BaseSettings):
             return [i.strip() for i in v.split(",") if i.strip()]
         return v
 
-    @field_validator("label_mapping", mode="before")
+    @field_validator("label_mapping", "website_final_label_mapping", mode="before")
     @classmethod
     def parse_label_mapping(cls, v):
         if isinstance(v, str):
-            # Parse JSON string if provided as environment variable
             import json
             try:
                 return json.loads(v)
             except json.JSONDecodeError:
-                # Fallback to default if parsing fails
-                return {'Ia': 0, 'IIn': 1, 'SLSNe-I': 2, 'II': 3, 'Ib/c': 4}
+                return v
         return v
 
     @field_validator("secret_key")

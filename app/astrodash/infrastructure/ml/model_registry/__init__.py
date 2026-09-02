@@ -32,6 +32,16 @@ from astrodash.infrastructure.ml.model_registry._model_definition import (
     ModelDefinition,
 )
 from astrodash.infrastructure.ml.model_registry.definitions.dash import DASH
+from astrodash.infrastructure.ml.model_registry.definitions.latent_noz import (
+    LATENT_NOZ,
+)
+from astrodash.infrastructure.ml.model_registry.definitions.latent_z import LATENT_Z
+from astrodash.infrastructure.ml.model_registry.definitions.oned_cnn_noz import (
+    ONED_CNN_NOZ,
+)
+from astrodash.infrastructure.ml.model_registry.definitions.oned_cnn_z import (
+    ONED_CNN_Z,
+)
 from astrodash.infrastructure.ml.model_registry.definitions.transformer import (
     TRANSFORMER,
 )
@@ -60,11 +70,15 @@ __all__ = [
 ]
 
 # Ordered registry of built-in classifiers. The order here is the order the
-# cards render on the model-selection page (Transformer first, then DASH),
-# preserving today's layout.
+# cards render on the model-selection page (Transformer first, then DASH,
+# then the website_final 1D CNN and latent variants).
 MODELS: Tuple[ModelDefinition, ...] = (
     TRANSFORMER,
     DASH,
+    ONED_CNN_Z,
+    ONED_CNN_NOZ,
+    LATENT_Z,
+    LATENT_NOZ,
 )
 
 

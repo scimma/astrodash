@@ -45,6 +45,9 @@ services:
       - django-static:/app/static
       - ../app:/app
       - astrodash-data:/mnt/astrodash-data
+      - /Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final:/Users/jesuscaraball0/code/personal_code/astrodash-web/data/pre_trained_models/website_final:ro
+      - /Users/jesuscaraball0/code/personal_code/astrodash-web/data/wiserep_henna/try_5/Dered36_5:/Users/jesuscaraball0/code/personal_code/astrodash-web/data/wiserep_henna/try_5/Dered36_5:ro
+      - /Users/jesuscaraball0/code/personal_code/astrodash-web/data/wiserep_henna/try_5_noz/Nodered36_5:/Users/jesuscaraball0/code/personal_code/astrodash-web/data/wiserep_henna/try_5_noz/Nodered36_5:ro
 
   database:
     extends:

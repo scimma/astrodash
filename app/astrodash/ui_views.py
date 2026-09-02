@@ -9,6 +9,7 @@ from django.http import (
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 from django.urls import reverse
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -146,6 +147,89 @@ def team_members(request):
         request,
         "astrodash/team_members.html",
         {"affiliations": affiliations},
+    )
+
+
+def leaderboard(request):
+    """
+    Renders the Model Leaderboard page (UI sketch with mock rankings).
+
+    Models are ranked on a monthly blind set of newly uploaded spectra.
+    Backend evaluation is not wired yet — this view serves placeholder data
+    so the layout can be reviewed.
+    """
+    challenge = {
+        "month_label": "July 2026",
+        "status": "Finalized",
+        "spectra_count": 142,
+        "eval_window": "Jul 1 – Jul 31, 2026",
+        "next_challenge": "August 2026",
+        "blind_set_note": "Models scored on spectra newly uploaded to WISeREP during the eval window.",
+    }
+    available_months = [
+        "July 2026",
+        "June 2026",
+        "May 2026",
+        "April 2026",
+    ]
+    # Mock standings — mix of built-in models and placeholder community entries.
+    rankings = [
+        {
+            "rank": 1,
+            "model": "Dash Model",
+            "color": "#28a745",
+            "micro_f1": 0.912,
+            "roc": 0.964,
+            "accuracy": 91.2,
+            "delta": 1.4,
+        },
+        {
+            "rank": 2,
+            "model": "Transformer Model",
+            "color": "#ff8c00",
+            "micro_f1": 0.887,
+            "roc": 0.951,
+            "accuracy": 88.7,
+            "delta": -0.6,
+        },
+        {
+            "rank": 3,
+            "model": "SNNet-v2 (community)",
+            "color": "#6f42c1",
+            "micro_f1": 0.863,
+            "roc": 0.938,
+            "accuracy": 86.3,
+            "delta": 2.1,
+        },
+        {
+            "rank": 4,
+            "model": "SpecFormer-lite",
+            "color": "#17a2b8",
+            "micro_f1": 0.839,
+            "roc": 0.921,
+            "accuracy": 83.9,
+            "delta": 0.3,
+        },
+        {
+            "rank": 5,
+            "model": "CNN-baseline-2024",
+            "color": "#6c757d",
+            "micro_f1": 0.794,
+            "roc": 0.887,
+            "accuracy": 79.4,
+            "delta": -1.8,
+        },
+    ]
+    return render(
+        request,
+        "astrodash/leaderboard.html",
+        {
+            "challenge": challenge,
+            "available_months": available_months,
+            "selected_month": challenge["month_label"],
+            "rankings": rankings,
+            "is_mock": True,
+        },
     )
 
 
@@ -998,11 +1082,12 @@ def batch_process(request):
             # form's, but reads the same declared policy: only a model whose
             # definition requires a redshift is refused for missing one.
             if (redshift_input_policy(selected_model_type) == REDSHIFT_INPUT_REQUIRED
-                    and form.cleaned_data.get('redshift') is None):
+                    and not form.cleaned_data.get('redshift')):
                 form.add_error('redshift', REDSHIFT_REQUIRED_MESSAGE)
             else:
                 try:
                     model_type = selected_model_type
+                    redshifts = form.cleaned_data.get('redshift') or []
 
                     # Prepare params
                     params = {
@@ -1010,7 +1095,8 @@ def batch_process(request):
                         'minWave': form.cleaned_data['min_wave'],
                         'maxWave': form.cleaned_data['max_wave'],
                         'knownZ': form.cleaned_data['known_z'],
-                        'zValue': form.cleaned_data['redshift'],
+                        'zValue': redshifts[0] if redshifts else None,
+                        'zValues': redshifts,
                         'calculateRlap': form.cleaned_data['calculate_rlap'],
                         'modelType': model_type if model_type != 'user_uploaded' else 'dash',  # Fallback for display
                     }
@@ -1022,6 +1108,7 @@ def batch_process(request):
                         f'''maxWave={params['maxWave']} '''
                         f'''knownZ={params['knownZ']} '''
                         f'''zValue={params['zValue']} '''
+                        f'''zValues={params['zValues']} '''
                         f'''calculateRlap={params['calculateRlap']} '''
                         f'''modelType={params['modelType']} '''
                     )
@@ -1053,10 +1140,16 @@ def batch_process(request):
                         model_id=selected_model_id
                     )
 
-                    # Format results for template
-                    formatted_results = _format_batch_results(results, params)
+                    # Format results for template. Run metadata is attached to
+                    # every row so the CSV is self-contained, and also passed
+                    # once for the results-page summary.
+                    run_metadata = _batch_run_metadata(model_type, params)
+                    formatted_results = _format_batch_results(
+                        results, params, metadata=run_metadata
+                    )
                     logger.info("Batch UI processing completed successfully for %d items", len(formatted_results))
                     context['results'] = formatted_results
+                    context['run_metadata'] = run_metadata
                     context['success'] = True
 
                 except AppException as e:
@@ -1069,13 +1162,58 @@ def batch_process(request):
     return render(request, 'astrodash/batch.html', context)
 
 
-def _format_batch_results(results, params):
+def _batch_input_redshift_display(params):
+    """Format submitted batch redshifts for the results banner and CSV fallback.
+
+    A single value stays a number (or ``None``). Several values become a
+    comma-separated string so the banner can show the whole list.
+    """
+    z_values = params.get('zValues')
+    if z_values is None:
+        z = params.get('zValue')
+        z_values = [] if z is None else [z]
+    if not z_values:
+        return None
+    if len(z_values) == 1:
+        return z_values[0]
+    return ', '.join(str(z) for z in z_values)
+
+
+def _batch_run_metadata(model_type, params, classified_at=None):
+    """
+    Build the run-level fields attached to a batch result set.
+
+    ``input_redshift`` is the submitted redshift or list of redshifts, or
+    ``None`` when none was given. ``model_type`` is the selected model, not the
+    display fallback stored on ``params['modelType']``.
+    """
+    if classified_at is None:
+        classified_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return {
+        'classified_at': classified_at,
+        'model_type': model_type,
+        'smoothing': params.get('smoothing'),
+        'min_wave': params.get('minWave'),
+        'max_wave': params.get('maxWave'),
+        'input_redshift': _batch_input_redshift_display(params),
+    }
+
+
+def _format_batch_results(results, params, metadata=None):
     """
     Format batch results for display in the template.
+
+    When ``metadata`` is supplied (classified_at, model_type, smoothing,
+    wavelength window, input_redshift), those fields are copied onto every
+    row, including error rows, so the CSV download is self-contained.
+    Per-spectrum ``input_redshift`` prefers the redshift actually applied to
+    that file when the batch service recorded one.
     """
     formatted = {}
+    run_fields = dict(metadata) if metadata else {}
+    banner_input_redshift = run_fields.pop('input_redshift', None)
     for filename, result in results.items():
-        formatted_item = {}
+        formatted_item = dict(run_fields)
 
         # Check for error
         if result.get('error'):
@@ -1100,6 +1238,11 @@ def _format_batch_results(results, params):
                 formatted_item['rlap'] = best_match.get('rlap', '-')
             else:
                 formatted_item['rlap'] = '-'
+
+        if 'applied_redshift' in result:
+            formatted_item['input_redshift'] = result.get('applied_redshift')
+        else:
+            formatted_item['input_redshift'] = banner_input_redshift
 
         formatted[filename] = formatted_item
 

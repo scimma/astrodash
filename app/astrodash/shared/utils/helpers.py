@@ -4,6 +4,8 @@ import re
 import math
 from typing import Any, Dict, List, Tuple, Optional
 
+from astrodash.shared.utils.validators import ValidationError
+
 def prepare_log_wavelength_and_templates(
     processed_data: Dict[str, List[float]],
     template_filename: str = 'sn_and_host_templates.npz',
@@ -182,6 +184,19 @@ def shift_to_rest_frame(wave: np.ndarray, flux: np.ndarray, redshift: float) -> 
     """Shift observed spectrum to rest-frame using the given redshift."""
     rest_wave = wave / (1 + redshift)
     return rest_wave, flux
+
+
+def sort_wave_flux(wave: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Return wavelength and flux sorted ascending in wavelength."""
+    wave = np.asarray(wave, dtype=np.float64).reshape(-1)
+    flux = np.asarray(flux, dtype=np.float64).reshape(-1)
+    if wave.size != flux.size:
+        raise ValidationError("Wavelength and flux must have the same length")
+    if wave.size >= 2 and wave[0] > wave[-1]:
+        wave = wave[::-1]
+        flux = flux[::-1]
+    order = np.argsort(wave, kind="mergesort")
+    return wave[order], flux[order]
 
 def construct_osc_reference(sn_name: str) -> str:
     """

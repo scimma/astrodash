@@ -21,15 +21,24 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from asgiref.sync import async_to_sync
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.signals import request_finished
 from django.db import close_old_connections
 from django.http import HttpResponse
 from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
+import numpy as np
 
-from astrodash.forms import ClassifyForm, ModelSelectionForm
+from astrodash.config.settings import get_settings
+from astrodash.forms import ClassifyForm, ModelSelectionForm, BatchForm, parse_redshift_csv
 from astrodash.infrastructure.ml import model_registry
-from astrodash.ui_views import _format_batch_results
+from astrodash.infrastructure.ml.data_processor import (
+    LatentEncoderSpectrumProcessor,
+    OnedCnnSpectrumProcessor,
+)
+from astrodash.ui_views import _batch_run_metadata, _format_batch_results
+from astrodash.core.exceptions import ValidationException
+from astrodash.domain.services.batch_processing_service import BatchProcessingService
 from astrodash.domain.services.redshift_service import RedshiftService
 from astrodash.domain.services.spectrum_processing_service import (
     SpectrumProcessingService,
@@ -37,7 +46,7 @@ from astrodash.domain.services.spectrum_processing_service import (
 
 
 class SelectModelPageParityTests(TestCase):
-    """AE1: the select-model page offers exactly the two built-in cards."""
+    """AE1: the select-model page offers every listed built-in card."""
 
     def _render_visible(self):
         """Render the select-model page and return its body with comments stripped.
@@ -66,10 +75,20 @@ class SelectModelPageParityTests(TestCase):
         # A *selectable card* is an element with an onclick="selectModel('...')"
         # attribute. (The bare selectModel('upload') call in the page's own
         # JavaScript is not a card, so match the attribute form specifically.)
-        self.assertIn("onclick=\"selectModel('transformer')\"", visible)
-        self.assertIn("onclick=\"selectModel('dash')\"", visible)
-        self.assertNotIn("onclick=\"selectModel('user_model')\"", visible)
-        self.assertNotIn("onclick=\"selectModel('upload')\"", visible)
+        card_ids = re.findall(r'''onclick="selectModel\('([^']+)'\)"''', visible)
+        self.assertEqual(
+            card_ids,
+            [
+                "transformer",
+                "dash",
+                "1dCNN_z",
+                "1dCNN_noz",
+                "latent_z",
+                "latent_noz",
+            ],
+        )
+        self.assertNotIn("user_model", card_ids)
+        self.assertNotIn("upload", card_ids)
 
     def test_cards_render_titles_descriptions_tags_badge_icon_and_order(self):
         visible = self._render_visible()
@@ -233,6 +252,22 @@ class ClassifyFormRedshiftParityTests(TestCase):
         form = ClassifyForm(data=self._base_data("dash"))
         self.assertTrue(form.is_valid(), form.errors)
 
+    def test_1dcnn_z_and_latent_z_require_redshift(self):
+        for model in ("1dCNN_z", "latent_z"):
+            with self.subTest(model=model):
+                form = ClassifyForm(data=self._base_data(model))
+                self.assertFalse(form.is_valid())
+                self.assertIn("redshift", form.errors)
+                self.assertTrue(
+                    any("Redshift is required" in e for e in form.errors["redshift"])
+                )
+
+    def test_1dcnn_noz_and_latent_noz_do_not_require_redshift(self):
+        for model in ("1dCNN_noz", "latent_noz"):
+            with self.subTest(model=model):
+                form = ClassifyForm(data=self._base_data(model))
+                self.assertTrue(form.is_valid(), form.errors)
+
 
 class BatchRlapParityTests(TestCase):
     """RLAP is populated only for DASH and only when requested."""
@@ -269,6 +304,198 @@ class BatchRlapParityTests(TestCase):
             self._results(), {"modelType": "dash", "calculateRlap": False}
         )
         self.assertEqual(out["a.dat"]["rlap"], "-")
+
+
+class BatchRunMetadataTests(TestCase):
+    """Run-level classification metadata is attached to every batch result row."""
+
+    def _params(self, **extra):
+        params = {
+            "smoothing": 6,
+            "minWave": 4000,
+            "maxWave": 8000,
+            "knownZ": False,
+            "zValue": None,
+            "calculateRlap": False,
+            "modelType": "dash",
+        }
+        params.update(extra)
+        return params
+
+    def test_missing_input_redshift_is_none(self):
+        meta = _batch_run_metadata("dash", self._params(), classified_at="2026-08-27T04:00:00+00:00")
+        self.assertIsNone(meta["input_redshift"])
+        self.assertEqual(meta["model_type"], "dash")
+        self.assertEqual(meta["smoothing"], 6)
+        self.assertEqual(meta["min_wave"], 4000)
+        self.assertEqual(meta["max_wave"], 8000)
+        self.assertEqual(meta["classified_at"], "2026-08-27T04:00:00+00:00")
+
+    def test_submitted_input_redshift_is_preserved(self):
+        meta = _batch_run_metadata(
+            "transformer", self._params(zValue=0.05), classified_at="t"
+        )
+        self.assertEqual(meta["input_redshift"], 0.05)
+        self.assertEqual(meta["model_type"], "transformer")
+
+    def test_user_uploaded_model_type_is_not_rewritten_to_dash(self):
+        # params['modelType'] is a display fallback of 'dash' for user models;
+        # recorded metadata must keep the selected type.
+        meta = _batch_run_metadata(
+            "user_uploaded", self._params(modelType="dash"), classified_at="t"
+        )
+        self.assertEqual(meta["model_type"], "user_uploaded")
+
+    def test_metadata_is_copied_onto_success_and_error_rows(self):
+        results = {
+            "ok.dat": {
+                "classification": {
+                    "best_match": {
+                        "type": "Ia",
+                        "age": "2 to 6",
+                        "probability": 0.9,
+                        "redshift": 0.01,
+                    }
+                }
+            },
+            "bad.xyz": {"error": "Unsupported file type"},
+        }
+        meta = _batch_run_metadata(
+            "dash", self._params(zValue=0.12), classified_at="2026-08-27T04:00:00+00:00"
+        )
+        out = _format_batch_results(results, self._params(), metadata=meta)
+        for filename in ("ok.dat", "bad.xyz"):
+            self.assertEqual(out[filename]["classified_at"], "2026-08-27T04:00:00+00:00")
+            self.assertEqual(out[filename]["model_type"], "dash")
+            self.assertEqual(out[filename]["smoothing"], 6)
+            self.assertEqual(out[filename]["min_wave"], 4000)
+            self.assertEqual(out[filename]["max_wave"], 8000)
+            self.assertEqual(out[filename]["input_redshift"], 0.12)
+        self.assertEqual(out["ok.dat"]["type"], "Ia")
+        self.assertEqual(out["bad.xyz"]["error"], "Unsupported file type")
+
+    def test_batch_view_exposes_run_metadata_on_the_page_and_rows(self):
+        session = self.client.session
+        session["selected_model_type"] = "dash"
+        session.save()
+        fake_results = {
+            "a.dat": {
+                "classification": {
+                    "best_match": {
+                        "type": "Ia",
+                        "age": "2 to 6",
+                        "probability": 0.9,
+                        "redshift": 0.01,
+                    }
+                }
+            }
+        }
+        upload = SimpleUploadedFile("a.dat", b"3500 1.0\n3600 1.1\n")
+        batch_svc = MagicMock(process_batch=AsyncMock(return_value=fake_results))
+        with patch(
+            "astrodash.ui_views.get_batch_processing_service", return_value=batch_svc
+        ):
+            resp = self.client.post(
+                reverse("astrodash:batch_process_ui"),
+                data={
+                    "smoothing": 6,
+                    "min_wave": 4000,
+                    "max_wave": 8000,
+                    "redshift": 0.03,
+                    "files": upload,
+                },
+            )
+        self.assertEqual(resp.status_code, 200)
+        meta = resp.context["run_metadata"]
+        self.assertEqual(meta["model_type"], "dash")
+        self.assertEqual(meta["smoothing"], 6)
+        self.assertEqual(meta["min_wave"], 4000)
+        self.assertEqual(meta["max_wave"], 8000)
+        self.assertEqual(meta["input_redshift"], 0.03)
+        self.assertTrue(meta["classified_at"])
+        row = resp.context["results"]["a.dat"]
+        self.assertEqual(row["model_type"], "dash")
+        self.assertEqual(row["input_redshift"], 0.03)
+        html = resp.content.decode()
+        self.assertIn("Classification metadata", html)
+        self.assertIn("Classified at", html)
+        self.assertIn("Input redshift", html)
+        self.assertIn("'Classified At'", html)
+        self.assertIn("'Input Redshift'", html)
+
+
+class BatchRedshiftCsvTests(TestCase):
+    """Batch redshift is a CSV list, one value per spectrum, lengths must match."""
+
+    def test_parse_redshift_csv_accepts_list_or_single_value(self):
+        self.assertEqual(parse_redshift_csv("[1, 0.01, 0.1]"), [1.0, 0.01, 0.1])
+        self.assertEqual(parse_redshift_csv("0.01, 0.1"), [0.01, 0.1])
+        self.assertEqual(parse_redshift_csv("0.03"), [0.03])
+        self.assertEqual(parse_redshift_csv(""), [])
+        self.assertEqual(parse_redshift_csv(None), [])
+
+    def test_batch_form_parses_csv_list(self):
+        form = BatchForm(
+            data={
+                "smoothing": 0,
+                "min_wave": 3500,
+                "max_wave": 10000,
+                "redshift": "[0.01, 0.02]",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["redshift"], [0.01, 0.02])
+
+    def test_process_file_list_applies_redshifts_in_order(self):
+        calls = []
+
+        async def get_spectrum(file):
+            return SimpleNamespace(
+                x=[1.0], y=[1.0], file_name=file.name, redshift=None, meta={}
+            )
+
+        async def process(spec, params):
+            calls.append((spec.file_name, params.get("zValue")))
+            spec.redshift = params.get("zValue")
+            return spec
+
+        classification_svc = MagicMock()
+        classification_svc.model_factory.get_classifier = MagicMock(return_value=object())
+        classification_svc.classify_spectrum = AsyncMock(
+            return_value=SimpleNamespace(results={"best_match": {}})
+        )
+        svc = BatchProcessingService(
+            MagicMock(get_spectrum_from_file=get_spectrum),
+            classification_svc,
+            MagicMock(process_spectrum_with_params=process),
+        )
+        files = [
+            SimpleUploadedFile("a.dat", b"1 1"),
+            SimpleUploadedFile("b.dat", b"1 1"),
+        ]
+        out = async_to_sync(svc.process_batch)(
+            files, {"zValues": [0.1, 0.2], "smoothing": 0}, "dash"
+        )
+        self.assertEqual(dict(calls), {"a.dat": 0.1, "b.dat": 0.2})
+        self.assertEqual(out["a.dat"]["applied_redshift"], 0.1)
+        self.assertEqual(out["b.dat"]["applied_redshift"], 0.2)
+
+    def test_mismatched_redshift_and_spectrum_counts_fail(self):
+        classification_svc = MagicMock()
+        classification_svc.model_factory.get_classifier = MagicMock(return_value=object())
+        svc = BatchProcessingService(
+            MagicMock(), classification_svc, MagicMock()
+        )
+        files = [
+            SimpleUploadedFile("a.dat", b"1 1"),
+            SimpleUploadedFile("b.dat", b"1 1"),
+        ]
+        with self.assertRaises(ValidationException) as ctx:
+            async_to_sync(svc.process_batch)(
+                files, {"zValues": [0.1], "smoothing": 0}, "dash"
+            )
+        self.assertIn("1 redshift", str(ctx.exception.message))
+        self.assertIn("2 spectrum", str(ctx.exception.message))
 
 
 class RedshiftEstimationGateParityTests(TestCase):
@@ -320,6 +547,18 @@ class PreprocessingVariantParityTests(TestCase):
         svc.transformer_processor = MagicMock(
             process=MagicMock(return_value=([3.0], [4.0], 0.22))
         )
+        svc.oned_cnn_processor = MagicMock(
+            process=MagicMock(return_value=[0.1] * 1025)
+        )
+        svc.latent_processor = MagicMock(
+            process=MagicMock(
+                return_value={
+                    "flux": [0.2] * 1320,
+                    "wavelength": [3202.5] * 1320,
+                    "mask": [False] * 1320,
+                }
+            )
+        )
         return svc
 
     def _spectrum(self):
@@ -330,6 +569,8 @@ class PreprocessingVariantParityTests(TestCase):
         out = svc.prepare_for_model(self._spectrum(), "dash")
         svc.dash_processor.process.assert_called_once()
         svc.transformer_processor.process.assert_not_called()
+        svc.oned_cnn_processor.process.assert_not_called()
+        svc.latent_processor.process.assert_not_called()
         # DASH result shape carries the processor's min/max indices.
         self.assertIn("min_idx", out)
         self.assertIn("max_idx", out)
@@ -340,6 +581,8 @@ class PreprocessingVariantParityTests(TestCase):
         out = svc.prepare_for_model(self._spectrum(), "transformer")
         svc.transformer_processor.process.assert_called_once()
         svc.dash_processor.process.assert_not_called()
+        svc.oned_cnn_processor.process.assert_not_called()
+        svc.latent_processor.process.assert_not_called()
         # Transformer result shape has no min/max indices.
         self.assertNotIn("min_idx", out)
         self.assertEqual(out["redshift"], 0.22)
@@ -349,8 +592,107 @@ class PreprocessingVariantParityTests(TestCase):
         out = svc.prepare_for_model(self._spectrum(), "user_uploaded")
         svc.dash_processor.process.assert_not_called()
         svc.transformer_processor.process.assert_not_called()
+        svc.oned_cnn_processor.process.assert_not_called()
+        svc.latent_processor.process.assert_not_called()
         # No definition -> pass-through: input redshift is returned unchanged.
         self.assertEqual(out["redshift"], 0.05)
+
+    def test_1dcnn_z_uses_oned_cnn_processor_with_redshift(self):
+        svc = self._service()
+        out = svc.prepare_for_model(self._spectrum(), "1dCNN_z")
+        svc.oned_cnn_processor.process.assert_called_once()
+        call = svc.oned_cnn_processor.process.call_args
+        self.assertTrue(call.kwargs["include_redshift"])
+        self.assertEqual(call.args[2], 0.05)
+        self.assertIs(out["model_input"], out["y"])
+        svc.latent_processor.process.assert_not_called()
+        svc.dash_processor.process.assert_not_called()
+
+    def test_1dcnn_noz_uses_oned_cnn_processor_without_redshift_feature(self):
+        svc = self._service()
+        out = svc.prepare_for_model(self._spectrum(), "1dCNN_noz")
+        svc.oned_cnn_processor.process.assert_called_once()
+        call = svc.oned_cnn_processor.process.call_args
+        self.assertFalse(call.kwargs["include_redshift"])
+        self.assertEqual(out["redshift"], 0.05)
+        svc.latent_processor.process.assert_not_called()
+
+    def test_latent_z_uses_latent_processor_with_deredshift(self):
+        svc = self._service()
+        out = svc.prepare_for_model(self._spectrum(), "latent_z")
+        svc.latent_processor.process.assert_called_once()
+        call = svc.latent_processor.process.call_args
+        self.assertTrue(call.kwargs["deredshift"])
+        self.assertEqual(len(out["model_input"]["flux"]), 1320)
+        svc.oned_cnn_processor.process.assert_not_called()
+
+    def test_latent_noz_uses_latent_processor_without_deredshift(self):
+        svc = self._service()
+        out = svc.prepare_for_model(self._spectrum(), "latent_noz")
+        svc.latent_processor.process.assert_called_once()
+        call = svc.latent_processor.process.call_args
+        self.assertFalse(call.kwargs["deredshift"])
+        self.assertIn("mask", out["model_input"])
+        svc.oned_cnn_processor.process.assert_not_called()
+
+
+def _dense_spectrum(redshift=0.05):
+    wave = np.linspace(3500.0, 10000.0, 400)
+    flux = np.linspace(0.5, 1.5, 400)
+    return wave, flux, redshift
+
+
+class OnedCnnSpectrumProcessorTests(SimpleTestCase):
+    def setUp(self):
+        self.processor = OnedCnnSpectrumProcessor()
+        self.wave, self.flux, self.z = _dense_spectrum()
+        self.cnn_length = get_settings().oned_cnn_input_length()
+
+    def test_z_variant_length_last_sample_is_z(self):
+        out = self.processor.process(
+            self.wave, self.flux, self.z, include_redshift=True
+        )
+        self.assertEqual(out.shape, (self.cnn_length,))
+        self.assertAlmostEqual(float(out[-1]), self.z, places=6)
+
+    def test_noz_variant_last_sample_is_zero(self):
+        out = self.processor.process(
+            self.wave, self.flux, self.z, include_redshift=False
+        )
+        self.assertEqual(out.shape, (self.cnn_length,))
+        self.assertEqual(float(out[-1]), 0.0)
+
+
+class LatentEncoderSpectrumProcessorTests(SimpleTestCase):
+    def setUp(self):
+        self.processor = LatentEncoderSpectrumProcessor()
+        self.n_wave = get_settings().latent_encoder_n_wave
+
+    def test_output_lengths_match_encoder_grid(self):
+        wave = np.linspace(4000.0, 9000.0, 300)
+        flux = np.ones(300)
+        out = self.processor.process(wave, flux, 0.05, deredshift=False)
+        self.assertEqual(out["flux"].shape, (self.n_wave,))
+        self.assertEqual(out["wavelength"].shape, (self.n_wave,))
+        self.assertEqual(out["mask"].shape, (self.n_wave,))
+
+    def test_deredshift_changes_wavelength_mapping(self):
+        wave = np.linspace(5000.0, 6000.0, 120)
+        flux = np.ones_like(wave)
+        z = 0.2
+        dered = self.processor.process(wave, flux, z, deredshift=True)
+        observed = self.processor.process(wave, flux, z, deredshift=False)
+        self.assertFalse(np.array_equal(dered["mask"], observed["mask"]))
+        self.assertFalse(np.array_equal(dered["flux"], observed["flux"]))
+
+    def test_uncovered_grid_edges_are_ignored(self):
+        wave = np.linspace(4000.0, 9000.0, 300)
+        flux = np.ones(300)
+        out = self.processor.process(wave, flux, 0.0, deredshift=False)
+        self.assertTrue(np.any(out["mask"]))
+        self.assertTrue(out["mask"][0])
+        self.assertTrue(out["mask"][-1])
+        self.assertFalse(np.all(out["mask"]))
 
 
 class BatchRedshiftGateParityTests(TestCase):
@@ -523,6 +865,21 @@ class RedshiftInputPolicyFlowTests(TestCase):
         self.assertIn(self.REDSHIFT_FIELD_MARKER, html)
         self.assertIn(self.KNOWN_Z_FIELD_MARKER, html)
 
+    def test_1dcnn_z_and_latent_z_render_redshift_controls_in_classify(self):
+        for model in ("1dCNN_z", "latent_z"):
+            with self.subTest(model=model):
+                html = self._render_visible("astrodash:classify", model)
+                self.assertIn(self.REDSHIFT_FIELD_MARKER, html)
+                self.assertIn(self.KNOWN_Z_FIELD_MARKER, html)
+
+    def test_1dcnn_noz_and_latent_noz_render_no_redshift_controls_in_classify(self):
+        for model in ("1dCNN_noz", "latent_noz"):
+            with self.subTest(model=model):
+                html = self._render_visible("astrodash:classify", model)
+                self.assertNotIn(self.REDSHIFT_FIELD_MARKER, html)
+                self.assertNotIn(self.KNOWN_Z_FIELD_MARKER, html)
+                self.assertIn('id="id_smoothing"', html)
+
     # --- validation: a submission omitting redshift passes in both flows ---
 
     def test_declining_model_validates_without_redshift_in_classify(self):
@@ -617,7 +974,11 @@ class ClassifyViewGateParityTests(TestCase):
             "min_wave": 3500,
             "max_wave": 10000,
         }
-        if model_type == "transformer":
+        definition = model_registry.get_definition(model_type)
+        if (
+            definition is not None
+            and definition.redshift_input == model_registry.REDSHIFT_INPUT_REQUIRED
+        ):
             data["redshift"] = "0.005"
 
         with patch(
@@ -734,6 +1095,14 @@ class ResultSurfaceRenderingTests(TestCase):
         self.assertNotIn("DASH Twins", html)
         self.assertIn("show active", self._tag_with_id(html, "classification-pane"))
 
+    def test_website_final_models_render_only_the_classification_tab(self):
+        for model in ("1dCNN_z", "1dCNN_noz", "latent_z", "latent_noz"):
+            with self.subTest(model=model):
+                html = self._render_visible(model)
+                self.assertIn(self.CLASSIFICATION_TAB, html)
+                self.assertNotIn(self.TWINS_TAB, html)
+                self.assertNotIn(self.TWINS_PANE, html)
+
     def test_user_uploaded_selection_renders_only_the_classification_tab(self):
         """KTD10: an unresolvable selection falls back to Classification alone."""
         html = self._render_visible("user_uploaded")
@@ -762,8 +1131,8 @@ class ClassifyTemplateLiteralGuardTests(SimpleTestCase):
     # A conditional comparison against a quoted built-in model id, in either
     # order, mirroring ``test_no_model_type_literals.py``'s guard.
     PATTERN = re.compile(
-        r"""(?:==|!=)\s*(?P<q1>['"])(?:dash|transformer|user_uploaded)(?P=q1)"""
-        r"""|(?P<q2>['"])(?:dash|transformer|user_uploaded)(?P=q2)\s*(?:==|!=)"""
+        r"""(?:==|!=)\s*(?P<q1>['"])(?:dash|transformer|user_uploaded|1dCNN_z|1dCNN_noz|latent_z|latent_noz)(?P=q1)"""
+        r"""|(?P<q2>['"])(?:dash|transformer|user_uploaded|1dCNN_z|1dCNN_noz|latent_z|latent_noz)(?P=q2)\s*(?:==|!=)"""
     )
 
     def test_no_per_model_conditional_in_the_classification_template(self):
