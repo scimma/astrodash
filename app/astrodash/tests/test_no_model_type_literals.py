@@ -106,9 +106,14 @@ INTENDED_COMMENT_PATTERN = re.compile(r"\{#.*?#\}", re.DOTALL)
 # A conditional comparison of a value against a quoted built-in model id, in
 # either order (``x == 'dash'`` or ``'dash' == x``). The quote style is
 # back-referenced so a mismatched-quote artifact cannot false-positive.
+# Include every shipped public id so a later ``model_type == '1dCNN_z'``
+# (etc.) in a gate file is caught the same way as dash/transformer.
+_BUILTIN_MODEL_IDS = (
+    "dash|transformer|1dCNN_z|1dCNN_noz|latent_z|latent_noz"
+)
 COMPARISON_PATTERN = re.compile(
-    r"""(?:==|!=)\s*(?P<q1>['"])(?:dash|transformer)(?P=q1)"""
-    r"""|(?P<q2>['"])(?:dash|transformer)(?P=q2)\s*(?:==|!=)"""
+    rf"""(?:==|!=)\s*(?P<q1>['"])(?:{_BUILTIN_MODEL_IDS})(?P=q1)"""
+    rf"""|(?P<q2>['"])(?:{_BUILTIN_MODEL_IDS})(?P=q2)\s*(?:==|!=)"""
 )
 
 
@@ -182,7 +187,7 @@ class NoModelTypeLiteralsTests(SimpleTestCase):
             "Found model-defining model_type comparison literals in the gate "
             "files. Route behavioral gates through the model registry's "
             "capability fields (get_definition(model_type).<capability>) "
-            "instead of comparing against 'dash'/'transformer':\n"
+            "instead of comparing against a quoted built-in model id:\n"
             + "\n".join(offenders),
         )
 
@@ -208,6 +213,18 @@ class GuardPatternsTests(SimpleTestCase):
     def test_flags_reversed_comparison(self) -> None:
         self.assertTrue(self._flags("        if 'dash' == model_type:"))
 
+    def test_flags_equality_against_1dcnn_z(self) -> None:
+        self.assertTrue(self._flags("        if model_type == '1dCNN_z':"))
+
+    def test_flags_equality_against_1dcnn_noz(self) -> None:
+        self.assertTrue(self._flags('        if model_type != "1dCNN_noz":'))
+
+    def test_flags_equality_against_latent_z(self) -> None:
+        self.assertTrue(self._flags("        if model_type == 'latent_z':"))
+
+    def test_flags_equality_against_latent_noz(self) -> None:
+        self.assertTrue(self._flags("        if 'latent_noz' == model_type:"))
+
     # --- negatives: lines the guard MUST NOT flag ---
 
     def test_does_not_flag_preprocessing_comparison(self) -> None:
@@ -215,6 +232,8 @@ class GuardPatternsTests(SimpleTestCase):
         self.assertFalse(
             self._flags("            elif preprocessing == 'transformer':")
         )
+        self.assertFalse(self._flags("            elif preprocessing == '1dcnn':"))
+        self.assertFalse(self._flags("            elif preprocessing == 'latent':"))
 
     def test_does_not_flag_assignment_default(self) -> None:
         self.assertFalse(self._flags('        model_type: str = "dash"'))

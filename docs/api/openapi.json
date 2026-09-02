@@ -258,7 +258,7 @@
                   },
                   "params": {
                     "type": "string",
-                    "description": "JSON string with processing parameters. Must include modelType (one of the active built-in model ids, e.g. dash or transformer) unless model_id is supplied; also accepts oscRef and other processing fields."
+                    "description": "JSON string with processing parameters. Must include modelType (one of the active built-in model ids: dash, transformer, 1dCNN_z, 1dCNN_noz, latent_z, latent_noz) unless model_id is supplied; also accepts oscRef and other processing fields. 1dCNN_z and latent_z require redshift; 1dCNN_noz and latent_noz do not take redshift as an input."
                   },
                   "model_id": {
                     "type": "string",
@@ -584,7 +584,7 @@
                   },
                   "params": {
                     "type": "string",
-                    "description": "JSON string with processing parameters. Must include modelType (one of the active built-in model ids, e.g. dash or transformer) unless model_id is supplied."
+                    "description": "JSON string with processing parameters. Must include modelType (one of the active built-in model ids: dash, transformer, 1dCNN_z, 1dCNN_noz, latent_z, latent_noz) unless model_id is supplied. 1dCNN_z and latent_z require redshift; 1dCNN_noz and latent_noz do not take redshift as an input."
                   },
                   "model_id": {
                     "type": "string",

@@ -1,8 +1,10 @@
 import numpy as np
 from scipy.signal import medfilt
 from scipy.interpolate import UnivariateSpline
-from typing import Tuple, Optional, Union
+from typing import Dict, Tuple, Optional, Union
 from astrodash.config.logging import get_logger
+from astrodash.config.settings import get_settings
+from astrodash.shared.utils.helpers import sort_wave_flux
 from astrodash.shared.utils.validators import validate_spectrum, ValidationError
 
 logger = get_logger(__name__)
@@ -512,3 +514,120 @@ class TransformerSpectrumProcessor:
             raise ValidationError(f"Invalid array range: min={arr_min}, max={arr_max}")
 
         return (arr - arr_min) / (arr_max - arr_min)
+
+
+class OnedCnnSpectrumProcessor:
+    """website_final 1D CNN input: DASH log-bins + redshift (or 0.0) as last sample.
+
+    Uses :class:`DashSpectrumProcessor` with the same ``Settings.w0`` / ``w1`` /
+    ``nw`` as original DASH (the grid that guided 1D CNN training). For the
+    z-variant, pass ``include_redshift=True``: the processor deredshifts with
+    the true ``z`` then concatenates that ``z``. For no-z, pass
+    ``include_redshift=False``: the processor is called with ``z=0`` (observed
+    frame) and ``0.0`` is concatenated so the vector stays length ``nw + 1``.
+    """
+
+    def __init__(self, processor: Optional[DashSpectrumProcessor] = None):
+        if processor is None:
+            settings = get_settings()
+            processor = DashSpectrumProcessor(
+                w0=settings.w0,
+                w1=settings.w1,
+                nw=settings.nw,
+            )
+        self.processor = processor
+
+    def process(
+        self,
+        wave: Union[np.ndarray, list],
+        flux: Union[np.ndarray, list],
+        redshift: float,
+        include_redshift: bool,
+    ) -> np.ndarray:
+        wave_arr, flux_arr = sort_wave_flux(wave, flux)
+        z_process = float(redshift) if include_redshift else 0.0
+        processed, _, _, _ = self.processor.process(wave_arr, flux_arr, z_process)
+        z_feature = float(redshift) if include_redshift else 0.0
+        return np.concatenate(
+            [
+                np.asarray(processed, dtype=np.float32).reshape(-1),
+                np.array([z_feature], dtype=np.float32),
+            ]
+        )
+
+
+class LatentEncoderSpectrumProcessor:
+    """website_final encoder grid: 1320 linear bins, 3200–9800 Å at 5 Å.
+
+    Training resampled with specutils ``FluxConservingResampler``. This runtime
+    uses ``numpy.interp`` onto Settings ``latent_encoder_wavelength_grid`` because
+    specutils is not a project dependency. Linear interpolation does not conserve
+    flux in a bin and fills interior gaps instead of leaving them empty; bins
+    outside the observed wavelength range are marked ignore (mask True).
+
+    Flux is median-absolute normalized (need >= 50 finite bins), clipped to
+    [-50, 50], and NaNs filled with 0. Mask True = ignore (DAEP). Phase is not
+    included; classifiers pass zeros. ``deredshift=True`` divides lambda by
+    (1+z) before resampling (latent_z); ``False`` keeps the observed frame
+    (latent_noz).
+    """
+
+    def __init__(self, wavelength_grid: Optional[np.ndarray] = None):
+        settings = get_settings()
+        self.n_wave = settings.latent_encoder_n_wave
+        self.min_finite_bins = settings.latent_encoder_min_finite_bins
+        self.flux_clip = settings.latent_encoder_flux_clip
+        if wavelength_grid is None:
+            self.wavelength_grid = np.asarray(
+                settings.latent_encoder_wavelength_grid(), dtype=np.float64
+            )
+        else:
+            self.wavelength_grid = np.asarray(wavelength_grid, dtype=np.float64).reshape(-1)
+        if self.wavelength_grid.size != self.n_wave:
+            raise ValueError(
+                f"Encoder grid must have {self.n_wave} bins, got {self.wavelength_grid.size}"
+            )
+
+    def process(
+        self,
+        wave: Union[np.ndarray, list],
+        flux: Union[np.ndarray, list],
+        redshift: float,
+        deredshift: bool,
+    ) -> Dict[str, np.ndarray]:
+        wave_arr, flux_arr = sort_wave_flux(wave, flux)
+        finite = np.isfinite(wave_arr) & np.isfinite(flux_arr)
+        wave_arr = wave_arr[finite]
+        flux_arr = flux_arr[finite]
+        if wave_arr.size < 2:
+            raise ValidationError("Spectrum has too few finite samples for encoder resampling")
+
+        if deredshift:
+            wave_arr = wave_arr / (1.0 + float(redshift))
+
+        grid = self.wavelength_grid
+        # numpy.interp vs FluxConservingResampler: linear sample-to-sample interp
+        # onto bin centers; uncovered edges become NaN and are masked ignore.
+        resampled = np.interp(grid, wave_arr, flux_arr, left=np.nan, right=np.nan)
+        covered = (grid >= wave_arr[0]) & (grid <= wave_arr[-1])
+        resampled = np.where(covered, resampled, np.nan)
+
+        finite_bins = np.isfinite(resampled)
+        if int(np.count_nonzero(finite_bins)) < self.min_finite_bins:
+            raise ValidationError(
+                f"Encoder spectrum has fewer than {self.min_finite_bins} finite bins after resample"
+            )
+
+        scale = float(np.median(np.abs(resampled[finite_bins])))
+        if not np.isfinite(scale) or scale == 0.0:
+            raise ValidationError("Cannot median-absolute-normalize encoder flux")
+
+        flux_norm = np.clip(resampled / scale, -self.flux_clip, self.flux_clip)
+        mask = ~np.isfinite(flux_norm)
+        flux_norm = np.nan_to_num(flux_norm, nan=0.0).astype(np.float32)
+
+        return {
+            "flux": flux_norm,
+            "wavelength": grid.astype(np.float32),
+            "mask": mask,
+        }

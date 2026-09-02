@@ -15,6 +15,14 @@ from astrodash.core.exceptions import ModelConfigurationException
 from astrodash.forms import ClassifyForm, ModelSelectionForm
 from astrodash.infrastructure.ml import model_registry as registry
 from astrodash.infrastructure.ml.classifiers.dash_classifier import DashClassifier
+from astrodash.infrastructure.ml.classifiers.latent_classifier import (
+    LatentNozClassifier,
+    LatentZClassifier,
+)
+from astrodash.infrastructure.ml.classifiers.oned_cnn_classifier import (
+    OnedCnnNozClassifier,
+    OnedCnnZClassifier,
+)
 from astrodash.infrastructure.ml.classifiers.transformer_classifier import (
     TransformerClassifier,
 )
@@ -39,6 +47,30 @@ class FactoryResolutionTests(SimpleTestCase):
         self.assertIs(
             registry.get_definition("transformer").classifier, TransformerClassifier
         )
+        self.assertIs(
+            registry.get_definition("1dCNN_z").classifier, OnedCnnZClassifier
+        )
+        self.assertIs(
+            registry.get_definition("1dCNN_noz").classifier, OnedCnnNozClassifier
+        )
+        self.assertIs(
+            registry.get_definition("latent_z").classifier, LatentZClassifier
+        )
+        self.assertIs(
+            registry.get_definition("latent_noz").classifier, LatentNozClassifier
+        )
+
+    def test_get_classifier_instantiates_website_final_classes(self):
+        cases = (
+            ("1dCNN_z", OnedCnnZClassifier, "_load_model"),
+            ("1dCNN_noz", OnedCnnNozClassifier, "_load_model"),
+            ("latent_z", LatentZClassifier, "_load_models"),
+            ("latent_noz", LatentNozClassifier, "_load_models"),
+        )
+        for model_id, cls, load_method in cases:
+            with self.subTest(model=model_id), patch.object(cls, load_method):
+                result = ModelFactory().get_classifier(model_id)
+                self.assertIsInstance(result, cls)
 
     def test_unknown_model_type_raises(self):
         with self.assertRaises(ModelConfigurationException):
@@ -67,6 +99,10 @@ class FormChoiceTests(SimpleTestCase):
             [
                 ("transformer", "Transformer Model"),
                 ("dash", "Dash Model"),
+                ("1dCNN_z", "1D CNN (redshift)"),
+                ("1dCNN_noz", "1D CNN (no redshift)"),
+                ("latent_z", "DAEP Latent (redshift)"),
+                ("latent_noz", "DAEP Latent (no redshift)"),
                 ("user_uploaded", "User uploaded model"),
             ],
         )
@@ -79,6 +115,10 @@ class FormChoiceTests(SimpleTestCase):
             [
                 ("transformer", "Transformer Model"),
                 ("dash", "Dash Model"),
+                ("1dCNN_z", "1D CNN (redshift)"),
+                ("1dCNN_noz", "1D CNN (no redshift)"),
+                ("latent_z", "DAEP Latent (redshift)"),
+                ("latent_noz", "DAEP Latent (no redshift)"),
                 ("user_model", "Use Uploaded Model"),
                 ("upload", "Upload Your Model"),
             ],

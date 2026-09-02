@@ -24,10 +24,34 @@ from astrodash.infrastructure.ml.classifiers.transformer_classifier import (
 class RegistryOrderingTests(SimpleTestCase):
     def test_active_definitions_are_transformer_then_dash(self):
         ids = [d.id for d in registry.active_definitions()]
-        self.assertEqual(ids, ["transformer", "dash"])
+        self.assertEqual(
+            ids,
+            [
+                "transformer",
+                "dash",
+                "1dCNN_z",
+                "1dCNN_noz",
+                "latent_z",
+                "latent_noz",
+            ],
+        )
 
     def test_default_is_transformer(self):
         self.assertEqual(registry.default_definition().id, "transformer")
+
+    def test_listed_definitions_include_dash_transformer_and_website_final(self):
+        ids = [d.id for d in registry.listed_definitions()]
+        self.assertEqual(
+            ids,
+            [
+                "transformer",
+                "dash",
+                "1dCNN_z",
+                "1dCNN_noz",
+                "latent_z",
+                "latent_noz",
+            ],
+        )
 
 
 class DefinitionFieldsTests(SimpleTestCase):
@@ -54,6 +78,29 @@ class DefinitionFieldsTests(SimpleTestCase):
         self.assertEqual(tr.preprocessing, "transformer")
         self.assertTrue(tr.is_default)
         self.assertIs(tr.classifier, TransformerClassifier)
+
+    def test_website_final_capability_fields(self):
+        expected = (
+            ("1dCNN_z", "1dcnn", registry.REDSHIFT_INPUT_REQUIRED),
+            ("1dCNN_noz", "1dcnn", registry.REDSHIFT_INPUT_NONE),
+            ("latent_z", "latent", registry.REDSHIFT_INPUT_REQUIRED),
+            ("latent_noz", "latent", registry.REDSHIFT_INPUT_NONE),
+        )
+        for model_id, preprocessing, redshift_input in expected:
+            with self.subTest(model=model_id):
+                definition = registry.get_definition(model_id)
+                self.assertIsNotNone(definition)
+                self.assertEqual(definition.preprocessing, preprocessing)
+                self.assertEqual(definition.redshift_input, redshift_input)
+                self.assertEqual(
+                    list(definition.surfaces), [registry.SURFACE_CLASSIFICATION]
+                )
+                self.assertFalse(definition.supports_redshift_estimation)
+                self.assertFalse(definition.supports_template_overlays)
+                self.assertFalse(definition.supports_rlap)
+                self.assertFalse(definition.is_default)
+                self.assertTrue(definition.listed)
+                self.assertFalse(definition.requires_credential)
 
     def test_unknown_id_resolves_to_none(self):
         self.assertIsNone(registry.get_definition("user_uploaded"))
@@ -167,7 +214,14 @@ class ListingTests(SimpleTestCase):
             )
 
     def test_builtin_models_are_listed_and_ungated(self):
-        for model_id in ("dash", "transformer"):
+        for model_id in (
+            "dash",
+            "transformer",
+            "1dCNN_z",
+            "1dCNN_noz",
+            "latent_z",
+            "latent_noz",
+        ):
             with self.subTest(model=model_id):
                 definition = registry.get_definition(model_id)
                 self.assertTrue(definition.listed)
@@ -182,6 +236,22 @@ class RedshiftInputPolicyTests(SimpleTestCase):
         transformer = registry.get_definition("transformer")
         self.assertEqual(dash.redshift_input, registry.REDSHIFT_INPUT_OPTIONAL)
         self.assertEqual(transformer.redshift_input, registry.REDSHIFT_INPUT_REQUIRED)
+        self.assertEqual(
+            registry.get_definition("1dCNN_z").redshift_input,
+            registry.REDSHIFT_INPUT_REQUIRED,
+        )
+        self.assertEqual(
+            registry.get_definition("latent_z").redshift_input,
+            registry.REDSHIFT_INPUT_REQUIRED,
+        )
+        self.assertEqual(
+            registry.get_definition("1dCNN_noz").redshift_input,
+            registry.REDSHIFT_INPUT_NONE,
+        )
+        self.assertEqual(
+            registry.get_definition("latent_noz").redshift_input,
+            registry.REDSHIFT_INPUT_NONE,
+        )
 
     def test_the_three_policies_are_distinct(self):
         self.assertEqual(

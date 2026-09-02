@@ -2,7 +2,7 @@
 
 AstroDASH is an API for supernovae spectra classification using machine learning models.
 
-- **Fast and reliable classification** (DASH CNN, Transformer, user models)
+- **Fast and reliable classification** (DASH, Transformer, 1D CNN, latent, and user models)
 - **Single and batch processing** with multiple file formats or SN names
 - **Strong contracts** with versioned REST endpoints and thorough docs
 

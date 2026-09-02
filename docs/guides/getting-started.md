@@ -33,7 +33,7 @@ Upload a spectrum file for classification:
 ```bash
 curl -X POST "http://localhost:8000/api/v1/process" \
   -F "file=@your_spectrum.fits" \
-  -F 'params={"smoothing": 6, "knownZ": true, "zValue": 0.5}'
+  -F 'params={"modelType": "dash", "smoothing": 6, "knownZ": true, "zValue": 0.5}'
 ```
 
 ### Step 3: Understand the Response
@@ -76,6 +76,7 @@ def process_spectrum(file_path, smoothing=6, known_z=False, z_value=None):
     # Prepare the request
     files = {'file': open(file_path, 'rb')}
     params = {
+        'modelType': 'dash',
         'smoothing': smoothing,
         'knownZ': known_z
     }
@@ -142,6 +143,7 @@ Here's a simple HTML/JavaScript example:
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
             formData.append('params', JSON.stringify({
+                modelType: 'dash',
                 smoothing: 6,
                 knownZ: true,
                 zValue: 0.5
