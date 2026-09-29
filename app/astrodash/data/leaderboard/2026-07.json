@@ -2,13 +2,13 @@
   "eval_window": "Jul 1 \u2013 Jul 31, 2026",
   "models": [
     {
-      "accuracy": 59.4,
+      "accuracy": 59.5,
       "id": "transformer",
-      "n_scored": 224,
-      "precision": 0.16053425247738043,
-      "recall": 0.21169467787114846,
-      "roc": null,
-      "skipped": 2
+      "n_scored": 222,
+      "precision": 0.14639283833596628,
+      "recall": 0.2026470588235294,
+      "roc": 0.5191434796219949,
+      "skipped": 4
     },
     {
       "accuracy": 71.4,
@@ -58,6 +58,7 @@
   ],
   "month": "2026-07",
   "month_label": "July 2026",
+  "scraped_at": "2026-09-25T17:46:05+00:00",
   "spectra_count": 226,
   "status": "Finalized"
 }

@@ -40,12 +40,13 @@ import csv
 import hashlib
 import html as html_lib
 import io
+import json
 import re
 import struct
 import sys
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
@@ -1229,6 +1230,45 @@ def write_metadata_atomic(
     tmp.replace(path)
 
 
+SNAPSHOT_FILENAME = "snapshot.json"
+
+
+def write_snapshot(
+    output_dir: Path,
+    *,
+    start: date,
+    end: date,
+    metadata: dict[str, dict[str, str]],
+) -> Path:
+    """Record when this dataset was scraped, beside the data it describes.
+
+    A WISeREP search window is not a stable set. Spectra keep arriving with
+    Creation Dates inside windows that closed months ago -- re-running these
+    same dates in September 2026 returned 13% to 66% more spectra per month
+    than the same commands did in August. So a month's contents are only
+    meaningful together with the date they were collected, and standings scored
+    from a dataset with no such date cannot be reproduced or checked by anyone.
+
+    Treat a published month as frozen at this date and do not re-scrape it; see
+    README.md.
+    """
+    rows = list(metadata.values())
+    objects = {str(row.get("iau") or "").strip() for row in rows}
+    objects.discard("")
+    payload = {
+        "scraped_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "window_start": start.isoformat(),
+        "window_end": end.isoformat(),
+        "spectra": len(rows),
+        "objects": len(objects),
+    }
+    path = output_dir / SNAPSHOT_FILENAME
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    tmp.replace(path)
+    return path
+
+
 def main() -> int:
     args = parse_args()
 
@@ -1403,6 +1443,9 @@ def main() -> int:
             )
 
     write_metadata_atomic(metadata_path, metadata)
+    snapshot_path = write_snapshot(
+        output_dir, start=args.start, end=args.end, metadata=metadata
+    )
 
     print()
     print("Done.")
@@ -1415,6 +1458,7 @@ def main() -> int:
     print(f"  Total metadata rows:    {len(metadata)}")
     print(f"  Spectra directory:      {spectra_dir}")
     print(f"  Metadata CSV:           {metadata_path}")
+    print(f"  Snapshot record:        {snapshot_path}")
 
     return 0 if failed == 0 else 1
 

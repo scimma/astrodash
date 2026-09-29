@@ -9,6 +9,7 @@ from astrodash.infrastructure.ml.leaderboard.dataset import load_challenge
 from astrodash.infrastructure.ml.leaderboard.store import (
     available_months,
     challenge_dir,
+    load_snapshot,
     eval_window,
     load_scores,
     month_label,
@@ -97,9 +98,15 @@ def build_leaderboard_context(selected_month: Optional[str] = None) -> dict[str,
                 spectra_count = None
 
     status = "Finalized" if scores else "Pending"
+    # Prefer the date recorded in the score file; fall back to the dataset's own
+    # sidecar so a month scored before this was stamped still shows provenance.
+    scraped_at = (scores or {}).get("scraped_at") or (
+        load_snapshot(year_month) or {}
+    ).get("scraped_at")
     challenge = {
         "month_label": (scores or {}).get("month_label") or month_label(year_month),
         "status": (scores or {}).get("status") or status,
+        "scraped_at": scraped_at,
         "spectra_count": spectra_count,
         "eval_window": (scores or {}).get("eval_window") or eval_window(year_month),
         "next_challenge": next_month(year_month),

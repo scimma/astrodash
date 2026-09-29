@@ -34,10 +34,48 @@ scoring step expects to find a month:
 ```
 {ASTRODASH_DATA_DIR}/wiserep_challenge/<YYYY-MM>/
     metadata.csv       iau,filename,type,redshift
+    snapshot.json      when this dataset was collected, and its counts
     spectra/           the ASCII spectra metadata.csv names
 ```
 
 `ASTRODASH_DATA_DIR` is `/mnt/astrodash-data` by default.
+
+### Datasets are reproducible, and say when they were collected
+
+Re-running the same commands months later returns the same dataset. Repeating
+all five 2026 challenge months in September that were first collected in August
+produced byte-identical `metadata.csv` files and the same spectra.
+
+The search phase is a different matter, and it is easy to misread. A search for
+a closed window returns more rows over time as people upload older
+observations -- June 2026 went from 322 to 390 candidate rows between those two
+runs. Those extra candidates are then filtered out: non-SN classifications,
+residual-0 duplicate uploads, and entries with no ASCII spectrum to download.
+So a growing candidate count does not mean a changed dataset, and comparing
+search counts across runs will suggest drift that the output does not have.
+
+What was missing was provenance. Nothing in a dataset recorded when it was
+collected, so two copies could not be told apart and a score file could not say
+which collection produced it. Each scrape now writes a `snapshot.json` beside
+`metadata.csv`:
+
+```json
+{
+  "scraped_at": "2026-09-25T16:00:00+00:00",
+  "window_start": "2026-07-01",
+  "window_end": "2026-07-31",
+  "spectra": 395,
+  "objects": 230
+}
+```
+
+The scoring step copies `scraped_at` into the score file and the page shows it
+beside the month's status, so standings are attributable to a collection rather
+than to an unrecorded moment.
+
+Re-collecting a month is safe because the result is reproducible, but there is
+no reason to: prefer the published copy in the bucket, which is also the one
+the recorded date refers to.
 
 ### Publishing a month
 

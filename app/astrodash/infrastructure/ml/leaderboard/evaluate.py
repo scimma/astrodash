@@ -13,6 +13,7 @@ a month onto the mount.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -44,6 +45,17 @@ from astrodash.infrastructure.ml.model_registry import (
 )
 
 logger = get_logger(__name__)
+
+
+def load_snapshot_for(data_dir: Path) -> Optional[dict]:
+    """Read the snapshot sidecar from an explicit dataset directory."""
+    path = Path(data_dir) / "snapshot.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def _probability_vector(result: dict) -> Optional[list[float]]:
@@ -123,6 +135,9 @@ def evaluate_month(
 ) -> dict:
     data_dir = Path(data_dir) if data_dir is not None else challenge_dir(year_month)
     rows = load_challenge(data_dir)
+    # Stamp the dataset's collection date onto the standings. Without it a
+    # score set cannot be reproduced, because the window keeps growing.
+    snapshot = load_snapshot_for(data_dir)
     factory = ModelFactory(get_settings())
     models = []
     for definition in listed_definitions():
@@ -134,6 +149,7 @@ def evaluate_month(
         "month_label": month_label(year_month),
         "eval_window": eval_window(year_month),
         "status": "Finalized",
+        "scraped_at": (snapshot or {}).get("scraped_at"),
         "spectra_count": len(rows),
         "models": models,
     }

@@ -2,13 +2,13 @@
   "eval_window": "May 1 \u2013 May 31, 2026",
   "models": [
     {
-      "accuracy": 67.8,
+      "accuracy": 68.2,
       "id": "transformer",
-      "n_scored": 180,
+      "n_scored": 179,
       "precision": 0.2395348837209302,
-      "recall": 0.204359197907585,
-      "roc": null,
-      "skipped": 0
+      "recall": 0.20593276203032299,
+      "roc": 0.5788688376503796,
+      "skipped": 1
     },
     {
       "accuracy": 79.2,
@@ -58,6 +58,7 @@
   ],
   "month": "2026-05",
   "month_label": "May 2026",
+  "scraped_at": "2026-09-25T17:46:05+00:00",
   "spectra_count": 180,
   "status": "Finalized"
 }

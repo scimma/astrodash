@@ -1,5 +1,6 @@
 """Leaderboard taxonomy, metrics, page assembly, and view."""
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -20,7 +21,11 @@ from astrodash.infrastructure.ml.leaderboard.evaluate import (
 )
 from astrodash.infrastructure.ml.leaderboard.metrics import score_predictions
 from astrodash.infrastructure.ml.leaderboard.page import build_leaderboard_context
-from astrodash.infrastructure.ml.leaderboard.store import write_scores
+from astrodash.infrastructure.ml.leaderboard.store import (
+    available_months,
+    load_snapshot,
+    write_scores,
+)
 from astrodash.infrastructure.ml.leaderboard.taxonomy import canonicalize
 from astrodash.infrastructure.ml.model_registry import (
     REDSHIFT_INPUT_NONE,
@@ -280,6 +285,116 @@ class DatasetDedupTests(SimpleTestCase):
             loaded = load_challenge(root)
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0].filename, "a.txt")
+
+
+class AvailableMonthsRobustnessTests(SimpleTestCase):
+    """A stray directory on the shared data mount must not break the page.
+
+    available_months() treated any directory holding a metadata.csv as a month
+    and handed the name to month_label(), so an operator's scratch directory
+    (e.g. "2026-06.his-upload") raised ValueError and 500'd /leaderboard.
+    """
+
+    def _months_with(self, *dirnames):
+        with TemporaryDirectory() as tmp:
+            for name in dirnames:
+                d = Path(tmp) / name
+                d.mkdir()
+                (d / "metadata.csv").write_text("iau,filename,type,redshift\n")
+            with patch(
+                "astrodash.infrastructure.ml.leaderboard.store.challenge_data_root",
+                return_value=Path(tmp),
+            ), patch(
+                "astrodash.infrastructure.ml.leaderboard.store.SCORES_DIR",
+                Path(tmp) / "no-scores",
+            ):
+                return available_months()
+
+    def test_month_directories_are_found(self):
+        self.assertEqual(self._months_with("2026-06", "2026-07"), ["2026-07", "2026-06"])
+
+    def test_non_month_directories_are_ignored(self):
+        self.assertEqual(
+            self._months_with("2026-06", "2026-06.his-upload", "scratch", "archive"),
+            ["2026-06"],
+        )
+
+    def test_page_renders_with_a_stray_directory_present(self):
+        with TemporaryDirectory() as tmp:
+            for name in ("2026-07", "2026-07.backup"):
+                d = Path(tmp) / name
+                d.mkdir()
+                (d / "metadata.csv").write_text("iau,filename,type,redshift\n")
+            with patch(
+                "astrodash.infrastructure.ml.leaderboard.store.challenge_data_root",
+                return_value=Path(tmp),
+            ), patch(
+                "astrodash.infrastructure.ml.leaderboard.store.SCORES_DIR",
+                Path(tmp) / "no-scores",
+            ):
+                context = build_leaderboard_context()
+        self.assertEqual(context["selected_month"], "2026-07")
+
+
+class SnapshotProvenanceTests(SimpleTestCase):
+    """Standings carry the date their dataset was collected.
+
+    The dataset a month is scored on is reproducible -- re-running the scrape
+    returns the same metadata.csv -- but nothing in a score file said which
+    collection it came from. The sidecar makes a dataset self-describing and
+    the date reaches the page, so a reader can tell two score sets apart.
+    """
+
+    def test_load_snapshot_reads_the_sidecar(self):
+        with TemporaryDirectory() as tmp:
+            month_dir = Path(tmp) / "2026-07"
+            month_dir.mkdir()
+            (month_dir / "snapshot.json").write_text(
+                '{"scraped_at": "2026-09-25T12:00:00+00:00", "spectra": 450}'
+            )
+            with patch(
+                "astrodash.infrastructure.ml.leaderboard.store.challenge_data_root",
+                return_value=Path(tmp),
+            ):
+                snap = load_snapshot("2026-07")
+        self.assertEqual(snap["scraped_at"], "2026-09-25T12:00:00+00:00")
+
+    def test_missing_snapshot_is_not_an_error(self):
+        with TemporaryDirectory() as tmp:
+            with patch(
+                "astrodash.infrastructure.ml.leaderboard.store.challenge_data_root",
+                return_value=Path(tmp),
+            ):
+                self.assertIsNone(load_snapshot("2026-07"))
+
+    def test_corrupt_snapshot_is_not_an_error(self):
+        with TemporaryDirectory() as tmp:
+            month_dir = Path(tmp) / "2026-07"
+            month_dir.mkdir()
+            (month_dir / "snapshot.json").write_text("{ not json")
+            with patch(
+                "astrodash.infrastructure.ml.leaderboard.store.challenge_data_root",
+                return_value=Path(tmp),
+            ):
+                self.assertIsNone(load_snapshot("2026-07"))
+
+    def test_page_surfaces_the_scrape_date_from_the_score_file(self):
+        with TemporaryDirectory() as tmp:
+            scores_dir = Path(tmp)
+            payload = {
+                "month": "2026-07",
+                "models": [],
+                "status": "Scored",
+                "scraped_at": "2026-09-25T12:00:00+00:00",
+            }
+            (scores_dir / "2026-07.json").write_text(json.dumps(payload))
+            with patch(
+                "astrodash.infrastructure.ml.leaderboard.store.SCORES_DIR", scores_dir
+            ):
+                context = build_leaderboard_context("2026-07")
+        self.assertEqual(
+            context["challenge"]["scraped_at"], "2026-09-25T12:00:00+00:00"
+        )
 
 
 class LeaderboardPageTests(SimpleTestCase):

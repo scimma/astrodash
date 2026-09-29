@@ -18,9 +18,12 @@ here performs a request.
 """
 
 import io
+import json
 import sys
 import zipfile
+from datetime import date
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from django.test import SimpleTestCase
 
@@ -30,6 +33,7 @@ if str(APP_DIR) not in sys.path:  # pragma: no cover - import shim
 
 from wiserep_scrape.wiserep_monthly_scrape import (  # noqa: E402
     USER_AGENT,
+    write_snapshot,
     extract_csv_text_from_zip,
     find_column,
     identify_search_columns,
@@ -187,3 +191,53 @@ class ClientIdentityTests(SimpleTestCase):
     def test_agent_is_overridable_for_a_registered_bot_id(self):
         custom = 'tns_marker{"tns_id":1234,"type":"bot","name":"AstroDASH"}'
         self.assertEqual(make_session(custom).headers["User-Agent"], custom)
+
+
+class SnapshotRecordTests(SimpleTestCase):
+    """A dataset records when it was collected.
+
+    A WISeREP window keeps gaining spectra after the month closes, so a month's
+    contents are only meaningful with a collection date attached. Without it,
+    standings scored from the dataset cannot be reproduced by anyone.
+    """
+
+    def _write(self, tmp, metadata):
+        return write_snapshot(
+            Path(tmp),
+            start=date(2026, 7, 1),
+            end=date(2026, 7, 31),
+            metadata=metadata,
+        )
+
+    def test_snapshot_records_window_and_counts(self):
+        # The scraper carries metadata as {filename: row}, not a list of rows.
+        # An earlier version of this test passed a list, so it agreed with the
+        # helper's wrong assumption instead of the caller's real shape.
+        rows = {
+            "a.dat": {"iau": "2026aaa", "filename": "a.dat"},
+            "b.dat": {"iau": "2026aaa", "filename": "b.dat"},
+            "c.dat": {"iau": "2026bbb", "filename": "c.dat"},
+        }
+        with TemporaryDirectory() as tmp:
+            payload = json.loads(self._write(tmp, rows).read_text())
+        self.assertEqual(payload["window_start"], "2026-07-01")
+        self.assertEqual(payload["window_end"], "2026-07-31")
+        self.assertEqual(payload["spectra"], 3)
+        self.assertEqual(payload["objects"], 2)
+        self.assertTrue(payload["scraped_at"].startswith("20"))
+
+    def test_blank_object_names_are_not_counted(self):
+        rows = {
+            "a.dat": {"iau": "", "filename": "a.dat"},
+            "b.dat": {"iau": "2026aaa", "filename": "b.dat"},
+        }
+        with TemporaryDirectory() as tmp:
+            payload = json.loads(self._write(tmp, rows).read_text())
+        self.assertEqual(payload["objects"], 1)
+
+    def test_snapshot_lands_beside_the_metadata(self):
+        with TemporaryDirectory() as tmp:
+            path = self._write(tmp, {})
+            self.assertEqual(path.name, "snapshot.json")
+            self.assertEqual(path.parent, Path(tmp))
+            self.assertEqual(list(Path(tmp).glob("*.tmp")), [])
