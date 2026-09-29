@@ -55,6 +55,7 @@ from astrodash.services import (
     get_twins_search_service,
 )
 from astrodash.core.exceptions import AppException
+from astrodash.shared.utils.helpers import sanitize_for_json
 from astrodash.config.logging import get_logger
 from asgiref.sync import async_to_sync
 from bokeh.embed import components
@@ -1365,4 +1366,10 @@ def _format_results(results):
 
         formatted_matches.append(match_dict)
 
-    return {'best_matches': formatted_matches}
+    # Classifier output carries numpy scalars (np.bool_, np.float32). The view
+    # stores this in request.session, which Django JSON-encodes in
+    # SessionMiddleware.process_response -- after the view has returned, where
+    # no view-level handler can catch the failure. sanitize_for_json converts
+    # them to builtins; views.py already does the same before serializing the
+    # REST response.
+    return sanitize_for_json({'best_matches': formatted_matches})

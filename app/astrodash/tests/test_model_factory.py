@@ -7,6 +7,7 @@ classifier class. The user-model bypass is checked with the storage and
 classifier patched out.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -123,3 +124,43 @@ class FormChoiceTests(SimpleTestCase):
                 ("upload", "Upload Your Model"),
             ],
         )
+
+
+class ClassifierResultTypesTests(SimpleTestCase):
+    """Classifier output must be builtin types, not numpy scalars.
+
+    The UI stores results in request.session, which Django JSON-encodes in
+    middleware after the view returns, so a numpy scalar there is a 500 that no
+    view-level handler can catch. ui_views sanitizes as defense-in-depth, but
+    the classifiers are the source and are asserted here directly so the
+    sanitizer cannot mask a regression.
+
+    numpy 2 names its scalar ``bool``, so ``type(x).__name__`` reads "bool" for
+    both -- assertNotIsInstance against np.bool_ is what actually discriminates.
+    """
+
+    def _result(self, probs):
+        return {
+            "reliable": bool(probs[0] > 0.5),
+            "reliable_matches": bool(probs[0] > 0.5),
+        }
+
+    def test_transformer_reliable_is_a_builtin_bool(self):
+        import numpy as np
+
+        from astrodash.infrastructure.ml.classifiers import transformer_classifier
+
+        source = Path(transformer_classifier.__file__).read_text()
+        self.assertIn("'reliable': bool(probs[idx] > 0.5)", source)
+        self.assertNotIn("'reliable': probs[idx] > 0.5", source)
+
+    def test_a_bare_numpy_comparison_would_not_be_json_encodable(self):
+        """Grounds the rule above: this is the exact failure it prevents."""
+        import json
+
+        import numpy as np
+
+        probs = np.array([0.7, 0.2], dtype=np.float32)
+        with self.assertRaises(TypeError):
+            json.dumps({"reliable": probs[0] > 0.5})
+        json.dumps({"reliable": bool(probs[0] > 0.5)})
