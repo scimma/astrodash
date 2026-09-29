@@ -83,9 +83,17 @@ Datasets live in the same Jetstream2 bucket as everything else, under
 `challenges/wiserep/`:
 
 ```bash
-mc cp        data/2026-07/metadata.csv  js-blast/astrodash/challenges/wiserep/2026-07/metadata.csv
-mc cp --recursive data/2026-07/spectra/ js-blast/astrodash/challenges/wiserep/2026-07/spectra/
+mc cp --recursive data/2026-07 js-blast/astrodash/challenges/wiserep/
 ```
+
+**The destination is the parent prefix, and the source carries no trailing
+slash.** `mc` is not `rsync`: a trailing slash on the source does not mean "the
+contents of", and `mc cp` appends the source's last path component to the
+destination. So `mc cp -r data/2026-07/ .../challenges/wiserep/2026-07/` writes
+everything to `challenges/wiserep/2026-07/2026-07/`, which is easy to miss
+because the upload reports success. `mc cp` has no `--dry-run`; to check a form
+before moving real data, copy a couple of small files to a scratch prefix, run
+`mc ls --recursive` on it, and remove it.
 
 Note the prefix. `init/data/` is the *download manifest* root: every file
 under it is fetched onto every pod and every developer volume at container
@@ -99,8 +107,8 @@ regeneration or image rebuild is needed to publish a month.
 Pull a month when you actually need to score it:
 
 ```bash
-mc cp --recursive js-blast/astrodash/challenges/wiserep/2026-07/ \
-  /mnt/astrodash-data/wiserep_challenge/2026-07/
+mc cp --recursive js-blast/astrodash/challenges/wiserep/2026-07 \
+  /mnt/astrodash-data/wiserep_challenge/
 ```
 
 Reads from this bucket are anonymous; only uploading needs credentials. See
