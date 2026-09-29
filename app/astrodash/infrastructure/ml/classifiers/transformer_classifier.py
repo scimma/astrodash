@@ -114,7 +114,10 @@ class TransformerClassifier(BaseClassifier):
                     'probability': float(probs[idx]),
                     'redshift': redshift,
                     'rlap': None,  # Not calculated for transformer model (RLAP requires template matching)
-                    'reliable': probs[idx] > 0.5  # Simple reliability threshold
+                    # bool(): probs is a numpy array, so a bare comparison yields
+                    # numpy.bool_, which json cannot encode. The session write in
+                    # the UI path would then 500 after the view had succeeded.
+                    'reliable': bool(probs[idx] > 0.5)
                 })
 
             best_match = matches[0] if matches else {}
@@ -128,7 +131,7 @@ class TransformerClassifier(BaseClassifier):
             return {
                 'best_matches': matches,
                 'best_match': best_match,
-                'reliable_matches': best_match.get('reliable', False) if best_match else False,
+                'reliable_matches': bool(best_match.get('reliable', False)) if best_match else False,
                 'class_probabilities': class_probabilities,
             }
 
