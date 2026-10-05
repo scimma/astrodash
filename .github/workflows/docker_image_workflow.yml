@@ -6,12 +6,21 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "dev[0-9]-v[0-9]+.[0-9]+.[0-9]+"
 
+# Least-privilege: the image is pushed to GitLab with its own registry
+# credentials, not with GITHUB_TOKEN, so this job needs no write scope on the
+# repository. actions:write is for the type=gha build cache below. Without this
+# block the job would take the repository default, which may be read/write on
+# everything.
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   build_push:
     runs-on: ubuntu-latest
     steps:
       - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6  # v2.0.0
         with:
           tool-cache: false
           large-packages: true
