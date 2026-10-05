@@ -1041,8 +1041,10 @@ class ClassifyViewGateParityTests(TestCase):
     read back from the session, which the view writes before any plotting.
     """
 
-    def _run_classify(self, model_type):
-        client = Client()
+    def _run_classify(self, model_type, results=None):
+        # raise_request_exception=False so a failure inside middleware surfaces
+        # as the 500 a user would see, rather than re-raising into the test.
+        client = Client(raise_request_exception=False)
         session = client.session
         session["selected_model_type"] = model_type
         session.save()
@@ -1053,7 +1055,11 @@ class ClassifyViewGateParityTests(TestCase):
 
         fake_classification = MagicMock()
         fake_classification.model_type = model_type
-        fake_classification.results = {"best_matches": [], "embedding": [0.0] * 1024}
+        fake_classification.results = (
+            results
+            if results is not None
+            else {"best_matches": [], "embedding": [0.0] * 1024}
+        )
 
         spectrum_svc = MagicMock(get_spectrum_data=AsyncMock(return_value=MagicMock()))
         processing_svc = MagicMock(
@@ -1088,16 +1094,50 @@ class ClassifyViewGateParityTests(TestCase):
         ), patch(
             "astrodash.ui_views.render", return_value=HttpResponse(b"")
         ):
-            client.post(reverse("astrodash:classify"), data=data)
-        return client.session
+            response = client.post(reverse("astrodash:classify"), data=data)
+        return response, client.session
+
+    def test_numpy_bool_in_a_result_does_not_break_the_session(self):
+        """A classifier's numpy scalars must survive the session write.
+
+        The mocks above returned ``best_matches: []``, so no classifier field
+        ever reached ``request.session``, which is why this class did not catch
+        the transformer returning ``numpy.bool_`` for ``reliable``. Django
+        JSON-encodes the session in SessionMiddleware.process_response, after
+        the view has already returned, so an unserializable value there is a
+        500 no view-level handler can catch. numpy 2 names its scalar ``bool``,
+        making the error read "Object of type bool is not JSON serializable".
+        """
+        probs = np.array([0.7, 0.2, 0.1], dtype=np.float32)
+        results = {
+            "best_matches": [
+                {
+                    "type": "Ia",
+                    "probability": float(probs[0]),
+                    "redshift": 0.032,
+                    "rlap": None,
+                    "reliable": probs[0] > 0.5,
+                }
+            ],
+            "best_match": {"type": "Ia"},
+            "reliable_matches": probs[0] > 0.5,
+        }
+        response, session = self._run_classify("transformer", results=results)
+        self.assertEqual(response.status_code, 200)
+        stored = (session.get("classify_results") or {}).get("best_matches") or []
+        self.assertTrue(stored, "the classification never reached the session")
+        self.assertIsInstance(stored[0]["reliable"], bool)
+        self.assertNotIsInstance(stored[0]["reliable"], np.bool_)
+        # The session must survive Django's own encoder.
+        json.dumps(dict(session.items()))
 
     def test_dash_stashes_twins_embedding_and_enables_templates(self):
-        session = self._run_classify("dash")
+        _, session = self._run_classify("dash")
         self.assertEqual(session.get("classify_dash_embedding"), [0.0] * 1024)
         self.assertTrue(session.get("classify_show_templates_section"))
 
     def test_transformer_no_twins_embedding_and_no_templates(self):
-        session = self._run_classify("transformer")
+        _, session = self._run_classify("transformer")
         self.assertNotIn("classify_dash_embedding", session)
         self.assertFalse(session.get("classify_show_templates_section"))
 
