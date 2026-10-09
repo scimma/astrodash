@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from http import HTTPStatus
 
 HTTP_400_BAD_REQUEST = HTTPStatus.BAD_REQUEST.value
@@ -5,6 +6,7 @@ HTTP_404_NOT_FOUND = HTTPStatus.NOT_FOUND.value
 HTTP_500_INTERNAL_SERVER_ERROR = HTTPStatus.INTERNAL_SERVER_ERROR.value
 HTTP_422_UNPROCESSABLE_ENTITY = HTTPStatus.UNPROCESSABLE_ENTITY.value
 HTTP_409_CONFLICT = HTTPStatus.CONFLICT.value
+HTTP_502_BAD_GATEWAY = HTTPStatus.BAD_GATEWAY.value
 
 class AppException(Exception):
     """Base exception for the application."""
@@ -136,10 +138,78 @@ class ExternalServiceException(AppException):
             error_message = f"{service} service error."
         super().__init__(error_message, status_code=HTTP_500_INTERNAL_SERVER_ERROR)
 
-class OSCServiceException(ExternalServiceException):
-    """Raised for OSC (Open Supernova Catalog) service errors."""
-    def __init__(self, message: str = None):
-        super().__init__("OSC", message)
+class AmbiguousDesignationException(AppException):
+    """Raised when a submitted designation matches more than one object.
+
+    The by-name lookup refuses rather than guessing which object the
+    researcher meant, and carries the matching designations so the surface can
+    offer the choice.
+    """
+
+    def __init__(self, name: str, designations: Sequence[str]) -> None:
+        """Build the failure.
+
+        Args:
+            name: The designation the researcher submitted.
+            designations: The distinct objects the source matched, as the
+                source spells them.
+        """
+        self.name = name
+        self.designations = tuple(designations)
+        listed = ", ".join(self.designations)
+        super().__init__(
+            f"Designation '{name}' matches more than one object ({listed}). "
+            f"Choose which one to classify.",
+            status_code=HTTP_409_CONFLICT,
+        )
+
+
+class NoEligibleSpectrumException(AppException):
+    """Raised when a designation resolved but carries no spectrum to classify.
+
+    Distinct from the source being unreachable: the source answered, and what
+    it holds for this designation is either embargoed, not a spectrum of the
+    object itself, or absent.
+    """
+
+    def __init__(self, name: str, detail: str = None) -> None:
+        """Build the failure.
+
+        Args:
+            name: The designation the researcher submitted.
+            detail: Optional extra explanation appended to the message.
+        """
+        self.name = name
+        message = f"No public, classifiable spectrum is available for '{name}'."
+        if detail:
+            message += f" {detail}"
+        super().__init__(message, status_code=HTTP_404_NOT_FOUND)
+
+
+class IncompleteSourceExportException(AppException):
+    """Raised when the source's export could not be read to exhaustion.
+
+    Ranking is only correct over every eligible spectrum for a designation, so
+    a truncated export is refused rather than ranked from the pages already
+    fetched. Distinct from the source being unreachable: the pages that arrived
+    were readable, but the set they form is partial.
+    """
+
+    def __init__(self, name: str, detail: str = None) -> None:
+        """Build the failure.
+
+        Args:
+            name: The designation the researcher submitted.
+            detail: Optional explanation of where the export stopped.
+        """
+        self.name = name
+        message = (
+            f"The spectrum listing for '{name}' could not be read in full, so "
+            f"no epoch was selected."
+        )
+        if detail:
+            message += f" {detail}"
+        super().__init__(message, status_code=HTTP_502_BAD_GATEWAY)
 
 # Resource and constraint exceptions
 class ResourceNotFoundException(AppException):

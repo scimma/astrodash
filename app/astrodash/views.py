@@ -27,7 +27,7 @@ from astrodash.services import (
     get_batch_processing_service,
     get_redshift_service,
 )
-from astrodash.shared.utils.helpers import sanitize_for_json, construct_osc_reference
+from astrodash.shared.utils.helpers import sanitize_for_json
 
 logger = get_logger(__name__)
 
@@ -220,10 +220,7 @@ def process_spectrum(request):
     except AppException as exc:
         return _json_error(exc.message, status=exc.status_code)
 
-    osc_ref = params.get("oscRef")
-    if osc_ref:
-        params["oscRef"] = construct_osc_reference(osc_ref)
-        osc_ref = params["oscRef"]
+    object_name = params.get("oscRef")
 
     spectrum_service = get_spectrum_service()
     processing_service = get_spectrum_processing_service()
@@ -232,7 +229,7 @@ def process_spectrum(request):
     try:
         spectrum = async_to_sync(spectrum_service.get_spectrum_data)(
             file=uploaded_file,
-            osc_ref=osc_ref,
+            object_name=object_name,
         )
         try:
             async_to_sync(spectrum_service.save_spectrum)(spectrum)

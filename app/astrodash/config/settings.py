@@ -226,9 +226,6 @@ class Settings(BaseSettings):
     log_dir: str = Field("logs")
     log_level: str = Field("INFO")
 
-    # Other
-    osc_api_url: str = Field("https://api.astrocats.space")
-
     # env_prefix is what makes the documented ASTRODASH_* names bind. Without
     # it pydantic-settings looks up the bare field name, so every ASTRODASH_*
     # variable is read as unset. case_sensitive must stay False so the

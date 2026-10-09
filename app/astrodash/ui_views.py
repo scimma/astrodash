@@ -823,10 +823,10 @@ def classify(request):
                 classification_service = get_classification_service()
 
                 # 1. Read Spectrum
-                # If file is provided, use it. Otherwise use supernova_name (osc_ref)
+                # If file is provided, use it. Otherwise use supernova_name
                 spectrum = async_to_sync(spectrum_service.get_spectrum_data)(
                     file=uploaded_file,
-                    osc_ref=supernova_name
+                    object_name=supernova_name,
                 )
 
                 # 2. Process Spectrum
