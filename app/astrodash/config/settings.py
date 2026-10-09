@@ -208,6 +208,20 @@ class Settings(BaseSettings):
     # User model parameters
     user_model_reliability_threshold: float = Field(0.5)
 
+    # WISeREP transport
+    # Bounds on the by-name lookup's outbound requests. The export is capped
+    # at 50 rows per page and takes a measured 5.4 to 10.2 seconds per page,
+    # against a 300-second deployment limit across two workers; the deadline
+    # and page cap below keep a slow upstream from holding a worker past it.
+    # The request interval matches the spacing the offline scraper applies.
+    wiserep_base_url: str = "https://www.wiserep.org"
+    wiserep_connect_timeout: float = 5.0
+    wiserep_read_timeout: float = 30.0
+    wiserep_total_deadline_seconds: float = 120.0
+    wiserep_page_cap: int = 10
+    wiserep_min_request_interval_seconds: float = 1.0
+    wiserep_download_deadline_seconds: float = 60.0
+
     # Logging
     log_dir: str = Field("logs")
     log_level: str = Field("INFO")
