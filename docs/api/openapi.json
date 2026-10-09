@@ -243,7 +243,7 @@
     "/process": {
       "post": {
         "summary": "Process Spectrum",
-        "description": "Classify a single supernova spectrum from a file upload or OSC reference.",
+        "description": "Classify a single supernova spectrum from a file upload or object designation.",
         "operationId": "processSpectrum",
         "requestBody": {
           "content": {
@@ -258,7 +258,7 @@
                   },
                   "params": {
                     "type": "string",
-                    "description": "JSON string with processing parameters. Must include modelType (one of the active built-in model ids: dash, transformer, 1dCNN_z, 1dCNN_noz, latent_z, latent_noz) unless model_id is supplied; also accepts oscRef and other processing fields. 1dCNN_z and latent_z require redshift; 1dCNN_noz and latent_noz do not take redshift as an input."
+                    "description": "JSON string with processing parameters. Must include modelType (one of the active built-in model ids: dash, transformer, 1dCNN_z, 1dCNN_noz, latent_z, latent_noz) unless model_id is supplied; also accepts objectName and other processing fields. 1dCNN_z and latent_z require redshift; 1dCNN_noz and latent_noz do not take redshift as an input."
                   },
                   "model_id": {
                     "type": "string",

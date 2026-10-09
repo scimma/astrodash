@@ -50,16 +50,23 @@ FastAPI validation errors (schema-level) may return a list under `detail`:
     { "detail": "Element 'Xe' not found in line list." }
     { "detail": "Spectrum with ID 'abc123' not found." }
     { "detail": "File not found: /path/to/file.txt" }
+    { "detail": "No public, classifiable spectrum is available for '2002er'." }
     ```
 
 - 409 Conflict
 
-  - Conflict with an existing resource
-  - Example:
+  - Conflict with an existing resource, or a designation that matches more
+    than one object
+  - Examples:
 
     ```json
     { "detail": "Model with name 'mymodel' already exists." }
+    { "detail": "Designation '2002e' matches more than one object (SN 2002ea, SN 2002eb). Choose which one to classify." }
     ```
+
+    An ambiguous designation is refused rather than guessed. The exception
+    carries the matching designations so a caller can offer the choice; the
+    message lists them in parentheses.
 
 - 422 Unprocessable Entity
 
@@ -70,6 +77,7 @@ FastAPI validation errors (schema-level) may return a list under `detail`:
     { "detail": "File validation failed." }
     { "detail": "Model validation failed." }
     { "detail": "Spectrum validation failed." }
+    { "detail": "spectrum 12345 for '2002er' leaves 42 point(s) inside 4000-9000 Angstroms, below the 100-point minimum" }
     ```
 
 - 429 Too Many Requests
@@ -94,12 +102,30 @@ FastAPI validation errors (schema-level) may return a list under `detail`:
     { "detail": "Configuration error." }
     { "detail": "Storage error." }
     { "detail": "Model configuration error." }
-    { "detail": "OSC service error." }
+    { "detail": "WISeREP service error: export for '2002er' exceeded the 120-second deadline after 3 page(s)" }
+    ```
+
+- 502 Bad Gateway
+
+  - The source answered, but the listing it returned could not be read to
+    exhaustion, so no epoch was selected. Distinct from the source being
+    unreachable: the pages that arrived were readable, but the set they form
+    is partial, and ranking a partial set could return a confident
+    classification of the wrong spectrum.
+  - Example:
+
+    ```json
+    { "detail": "The spectrum listing for '2002er' could not be read in full, so no epoch was selected." }
     ```
 
 ## Exception to HTTP mapping
 
-Exceptions in `app/core/exceptions.py` are mapped as follows:
+Exceptions in `app/astrodash/core/exceptions.py` are mapped as follows.
+`WiserepUnreachableError` lives in
+`app/astrodash/infrastructure/wiserep/client.py` and
+`WiserepUnusableSpectrumError` in
+`app/astrodash/infrastructure/storage/wiserep_spectrum_repository.py`; both are
+re-raised unchanged through the by-name path rather than relabelled.
 
 | Exception | HTTP | Notes |
 |-----------|------|-------|
@@ -118,7 +144,12 @@ Exceptions in `app/core/exceptions.py` are mapped as follows:
 | ResourceNotFoundException | 404 | Missing resource by ID |
 | ResourceConflictException / ModelConflictException | 409 | Duplicate names or conflicts |
 | ConfigurationException | 500 | Misconfiguration |
-| ExternalServiceException / OSCServiceException | 500 | Upstream failure |
+| ExternalServiceException | 500 | Upstream failure |
+| WiserepUnreachableError | 500 | WISeREP could not be read within its bounds: connection failure, HTTP error status, per-request timeout, response over the byte cap, or elapsed time past a deadline |
+| IncompleteSourceExportException | 502 | The WISeREP listing could not be read to exhaustion, so nothing was ranked |
+| AmbiguousDesignationException | 409 | The designation matched more than one object; carries the matching designations |
+| NoEligibleSpectrumException | 404 | The designation resolved, but nothing it holds is public, of the object itself, and classifiable |
+| WiserepUnusableSpectrumError | 422 | The selected spectrum cannot be classified as fetched: unparseable payload, an off-host or non-`https` download URL, or too few points inside the usable window |
 | FileNotFoundException | 404 | File not found |
 | FileReadException | 400 | Error reading file |
 | UnsupportedFileFormatException | 400 | Unsupported file format |
@@ -133,7 +164,7 @@ Exceptions in `app/core/exceptions.py` are mapped as follows:
 
 ## Validation details
 
-- `params` is a JSON string in multipart form with fields like `smoothing`, `knownZ`, `zValue`, `minWave`, `maxWave`, `calculateRlap`, `oscRef`
+- `params` is a JSON string in multipart form with fields like `smoothing`, `knownZ`, `zValue`, `minWave`, `maxWave`, `calculateRlap`, `objectName`
 - `upload-model` requires a TorchScript file (`.pth`/`.pt`), a JSON `class_mapping`, and an `input_shape` (single shape or list of shapes)
 - FastAPI may return structured validation errors for malformed requests (see example above)
 
@@ -176,7 +207,7 @@ Exceptions in `app/core/exceptions.py` are mapped as follows:
 2. Minimal repro: run a known-good cURL from the docs
 3. File parsing: verify text columns are numeric and within wavelength range
 4. Options: confirm `sn_type` and `age_bin` via `/api/v1/analysis-options`
-5. OSC: ensure `oscRef` uses `osc-<object>-0` with a valid OSC object name
+5. By name: ensure `objectName` is a designation WISeREP knows -- an IAU name with or without an `SN` or `AT` prefix (`2002er`, `SN2002er`, `SN 2002er`) or a survey internal name
 6. Models: verify TorchScript loads locally; ensure class mapping size matches outputs
 7. Rate limits: on 429, respect `Retry-After`
 

@@ -220,7 +220,7 @@ def process_spectrum(request):
     except AppException as exc:
         return _json_error(exc.message, status=exc.status_code)
 
-    object_name = params.get("oscRef")
+    object_name = params.get("objectName")
 
     spectrum_service = get_spectrum_service()
     processing_service = get_spectrum_processing_service()

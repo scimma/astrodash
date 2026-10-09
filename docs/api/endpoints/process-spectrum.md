@@ -1,6 +1,6 @@
 # Process Spectrum
 
-Process and classify a single spectrum file or OSC reference.
+Process and classify a single spectrum file or object designation.
 
 ## Endpoint
 
@@ -27,7 +27,7 @@ multipart/form-data
 | `file` | File | No\* | Spectrum file to upload (FITS, DAT, TXT, or LNW) |
 | `params` | String (JSON) | No | Processing parameters as JSON string |
 
-\*Either `file` or `oscRef` in params is required.
+\*Either `file` or `objectName` in params is required.
 
 ### Processing Parameters
 
@@ -36,7 +36,7 @@ The `params` parameter accepts a JSON string with the following fields:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `modelType` | String | \- | Classifier to use. **Required** unless `model_id` is supplied. Must be one of the active built-in model ids (`dash`, `transformer`, `1dCNN_z`, `1dCNN_noz`, `latent_z`, `latent_noz`); an omitted, unknown, or retired value returns `400`. The valid values track the model registry, so they change as models are added or retired. See [Built-in models](#built-in-models). |
-| `oscRef` | String | \- | SN name on Open Supernova Catalog (e.g., "sn2002er") |
+| `objectName` | String | \- | Object designation resolved against WISeREP (e.g., "2002er", "SN2002er", or a survey internal name) |
 | `smoothing` | Integer | 0 | Smoothing parameter |
 | `knownZ` | Boolean | false | Whether redshift is known. Required (with `zValue`) for `transformer`, `1dCNN_z`, and `latent_z`. Not used as a model input for `1dCNN_noz` or `latent_noz`. Optional for `dash`. |
 | `zValue` | Float | \- | Redshift value (required if `knownZ` is true, and for models that require redshift as an input) |
@@ -97,7 +97,7 @@ All of the following ids are **public** (listed, ungated). Send them as `params.
 
 ```json
 {
-  "detail": "No spectrum file or OSC reference provided"
+  "detail": "No spectrum file or object designation provided"
 }
 ```
 
@@ -158,13 +158,13 @@ fetch('http://localhost:8000/api/v1/process', {
 .then(data => console.log(data));
 ```
 
-### OSC Reference
+### Object Designation
 
 #### cURL
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/process" \
-  -F 'params={"modelType": "dash", "oscRef": "osc-sn2011fe-0", "smoothing": 4}'
+  -F 'params={"modelType": "dash", "objectName": "2002er", "smoothing": 4}'
 ```
 
 #### Python
@@ -173,7 +173,7 @@ curl -X POST "http://localhost:8000/api/v1/process" \
 import requests
 
 data = {
-    'params': '{"modelType": "dash", "oscRef": "osc-sn2011fe-0", "smoothing": 4}'
+    'params': '{"modelType": "dash", "objectName": "2002er", "smoothing": 4}'
 }
 
 response = requests.post('http://localhost:8000/api/v1/process', data=data)

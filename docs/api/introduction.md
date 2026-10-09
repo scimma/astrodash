@@ -23,13 +23,13 @@ AstroDash serves astronomers, astrophysicists, machine learning researchers, and
 ## Quick Start
 
 1. Health check: `GET /health`
-2. Classify one spectrum: `POST /astrodash/api/v1/process` with `file` (or `params.oscRef`)
+2. Classify one spectrum: `POST /astrodash/api/v1/process` with `file` (or `params.objectName`)
 3. Explore and test endpoints: Swagger UI at `/docs`, OpenAPI at `/openapi.json`
 
 ## API Surface Summary
 
 - **Spectrum and Classification**
-  - `POST /astrodash/api/v1/process`: classify a single spectrum (file or OSC reference)
+  - `POST /astrodash/api/v1/process`: classify a single spectrum (file or object designation)
 
 - **Batch**
   - `POST /astrodash/api/v1/batch-process`: classify a ZIP folder or multiple files
