@@ -15,6 +15,11 @@ Covered here: the WISeREP export shapes the scraper parses (zip-of-CSV, bare
 CSV, HTML table), residual-0 duplicate identity, and the filename stability
 that makes a re-run idempotent. Network behaviour is not covered; nothing
 here performs a request.
+
+The export parsing itself now lives in
+``astrodash.infrastructure.wiserep.parsing`` and the scraper re-exports it, so
+the parsing assertions below also hold the shared module to the behaviour the
+scraper had. ``test_wiserep_parsing`` covers that module directly.
 """
 
 import io
