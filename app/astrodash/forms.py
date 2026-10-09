@@ -2,8 +2,9 @@ from django import forms
 from django.core.validators import FileExtensionValidator
 import json
 import ast
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+from astrodash.infrastructure.wiserep.selection import normalize_designation
 from astrodash.infrastructure.ml.model_registry import (
     REDSHIFT_INPUT_NONE,
     REDSHIFT_INPUT_OPTIONAL,
@@ -83,6 +84,52 @@ def _selection_model_choices():
     ]
 
 
+def candidate_records_for_name(object_name: Optional[str]) -> List[Dict[str, Any]]:
+    """Read the candidate set already resolved for a submitted designation.
+
+    The durably stored set is read rather than the cache in front of it: the
+    cache holds the same records under a lifetime, so reading the stored set
+    is what keeps a researcher's own epoch choice from being rejected because
+    a cache entry aged out.
+
+    Args:
+        object_name: The designation as submitted, in any accepted form, or
+            ``None``/empty when no designation is in play.
+
+    Returns:
+        The ranked candidate records for that designation, earliest first, or
+        an empty list when no set has been resolved for it.
+    """
+    normalized = normalize_designation(object_name or "")
+    if not normalized:
+        return []
+    from astrodash.services import get_candidate_set_repo
+
+    stored = get_candidate_set_repo().get(normalized)
+    records = (stored or {}).get("candidates") or []
+    return [record for record in records if record.get("source_spectrum_id")]
+
+
+def epoch_choice_label(record: Dict[str, Any]) -> str:
+    """Describe one eligible spectrum for the epoch control.
+
+    Args:
+        record: One candidate record, carrying ``observation_date``,
+            ``instrument`` and ``quality``.
+
+    Returns:
+        A label reading observation date, instrument and quality flag, with
+        the flag named as unstated when WISeREP left it empty -- it is empty
+        on most rows.
+    """
+    quality = (record.get("quality") or "").strip()
+    return "{date} - {instrument} - quality {quality}".format(
+        date=(record.get("observation_date") or "").strip() or "date unknown",
+        instrument=(record.get("instrument") or "").strip() or "instrument unknown",
+        quality=quality or "not stated",
+    )
+
+
 class ClassifyForm(forms.Form):
     supernova_name = forms.CharField(
         label="Supernova Name",
@@ -137,7 +184,19 @@ class ClassifyForm(forms.Form):
         widget=forms.NumberInput(attrs={'class': 'form-control', 'step': 'any'})
     )
 
-    def __init__(self, *args, effective_model=None, **kwargs):
+    # Which epoch of a resolved designation to classify (R8). The choices are
+    # the eligible spectra of whichever designation is in play, so they are
+    # built in __init__ and re-derived on every submission -- a ChoiceField
+    # validates against its choices, and choices built only for the unbound
+    # render would reject the researcher's own selection.
+    source_spectrum_id = forms.ChoiceField(
+        label="Spectrum epoch",
+        required=False,
+        choices=[],
+        widget=forms.Select(attrs={"class": "form-control"}),
+    )
+
+    def __init__(self, *args, effective_model=None, object_name=None, **kwargs):
         """Build the form, optionally bound to the model that will actually run.
 
         Args:
@@ -149,6 +208,10 @@ class ClassifyForm(forms.Form):
                 listed choice set, and a scoped submission would otherwise fail
                 validation before the view consulted the scope), and it decides
                 the redshift policy this form validates against.
+            object_name: The designation whose eligible spectra the epoch
+                control offers, when one is in play -- the submitted name on a
+                POST, the last classified name on a re-render. The choices are
+                derived from the candidate set already resolved for it.
             **kwargs: Standard form keyword arguments.
         """
         super().__init__(*args, **kwargs)
@@ -159,6 +222,26 @@ class ClassifyForm(forms.Form):
             choices.append((definition.id, definition.title))
         self.fields['model'].choices = choices
         self.fields['model'].initial = effective_model or default_definition().id
+
+        # Whether the required-redshift gate was left for the view to apply
+        # after resolution; set in clean().
+        self.redshift_required_deferred = False
+        self.object_name = object_name
+        self.epoch_records = candidate_records_for_name(object_name)
+        epoch_choices = [
+            (str(record["source_spectrum_id"]), epoch_choice_label(record))
+            for record in self.epoch_records
+        ]
+        if not epoch_choices and self.is_bound:
+            # No set was derived for this designation -- a first lookup, or a
+            # name whose resolution refused -- so there is nothing to judge a
+            # submitted choice against. Accepting it leaves the seam to fall
+            # back to the automatic selection; rejecting it would refuse a
+            # lookup for a reason the researcher cannot see.
+            submitted = (self.data.get("source_spectrum_id") or "").strip()
+            if submitted:
+                epoch_choices = [(submitted, submitted)]
+        self.fields["source_spectrum_id"].choices = epoch_choices
 
     def clean(self):
         cleaned_data = super().clean()
@@ -179,8 +262,17 @@ class ClassifyForm(forms.Form):
         # Require a redshift only when the selected model's declared policy
         # says it is a required input; an optional-input or unresolvable
         # selection (user-uploaded models use 0.0 if missing) passes without one.
+        #
+        # A name-only submission is the exception: WISeREP carries the object's
+        # redshift and populating it is what makes a name a complete
+        # classification in one step (R9). The field is therefore judged
+        # against the resolved value rather than the empty submitted one, and
+        # the view applies the same gate once resolution has run (R11).
         if redshift_input_policy(model) == REDSHIFT_INPUT_REQUIRED and redshift is None:
-            self.add_error('redshift', REDSHIFT_REQUIRED_MESSAGE)
+            if file or not supernova_name:
+                self.add_error("redshift", REDSHIFT_REQUIRED_MESSAGE)
+            else:
+                self.redshift_required_deferred = True
 
         return cleaned_data
 

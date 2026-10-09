@@ -48,7 +48,7 @@
                     <h5 class="mb-0">Input Parameters</h5>
                 </div>
                 <div class="card-body">
-                    <form method="post" enctype="multipart/form-data">
+                    <form method="post" enctype="multipart/form-data" class="by-name-aware" id="classify-form">
                         {% csrf_token %}
 
                         {% if scoped_model_display %}
@@ -110,6 +110,12 @@
                         </div>
                         <div class="form-group">
                             {{ form.redshift|as_crispy_field }}
+                            {% if redshift_from_source %}
+                            <small class="form-text text-muted" id="redshift-source-note">
+                                Redshift from <a href="https://www.wiserep.org/" target="_blank" rel="noopener noreferrer">WISeREP</a>
+                                for {{ spectrum_provenance.designation }}. Edit it to use your own value.
+                            </small>
+                            {% endif %}
                         </div>
                         {% endif %}
 
@@ -137,6 +143,82 @@
 
         <!-- Main Content: Results & Plot -->
         <div class="col-md-9">
+            {% comment %}
+              The by-name lookup report. One region for the line naming the
+              selected spectrum, the epoch control and any refusal, so a
+              screen reader hears the outcome of a lookup announced in one
+              place and focus can be moved to it after a by-name submit.
+            {% endcomment %}
+            <section id="lookup-report"
+                     class="mb-3"
+                     role="region"
+                     tabindex="-1"
+                     aria-live="polite"
+                     aria-label="Spectrum lookup">
+                <div id="lookup-status" class="sr-only" role="status" aria-live="polite"></div>
+                {% if spectrum_provenance %}
+                <div class="alert alert-light border mb-2">
+                    <p class="mb-1">
+                        <strong>Spectrum:</strong>
+                        {{ spectrum_provenance.designation }},
+                        observed {{ spectrum_provenance.observation_date|default:"date not recorded" }},
+                        {{ spectrum_provenance.instrument|default:"instrument not recorded" }}{% if spectrum_provenance.quality %},
+                        quality {{ spectrum_provenance.quality }}{% endif %}.
+                    </p>
+                    <p class="mb-0 small text-muted">
+                        Chosen as {{ spectrum_provenance.selection_basis }}.
+                        {% if spectrum_provenance.retrieved_at %}Retrieved {{ spectrum_provenance.retrieved_at }}.{% endif %}
+                        Source: <a href="https://www.wiserep.org/" target="_blank" rel="noopener noreferrer">WISeREP</a>.
+                    </p>
+                </div>
+                {% endif %}
+                {% if lookup_refusal %}
+                <div class="alert alert-warning mb-2">
+                    <p class="mb-0">{{ lookup_refusal.message }}</p>
+                </div>
+                {% endif %}
+                {% if form.source_spectrum_id.errors %}
+                {% comment %}
+                  The epoch control is the only place this field is offered, so
+                  a rejected choice reports here rather than beside a control
+                  that is not on the page.
+                {% endcomment %}
+                <div class="alert alert-warning mb-2">{{ form.source_spectrum_id.errors }}</div>
+                {% endif %}
+                {% if ambiguous_choices %}
+                <div class="card mb-2">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0" id="ambiguous-objects-heading">Matching objects</h6>
+                    </div>
+                    <ul class="list-group list-group-flush" aria-labelledby="ambiguous-objects-heading">
+                        {% for choice in ambiguous_choices %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap">
+                            <span class="mr-2">{{ choice.designation }}{% if choice.object_type %} <span class="badge badge-light">{{ choice.object_type }}</span>{% endif %}{% if choice.redshift is not None %} <small class="text-muted">z = {{ choice.redshift }}</small>{% endif %}</span>
+                            <form method="post" class="mb-0 by-name-aware">
+                                {% csrf_token %}
+                                {% for name, value in choice.fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Classify {{ choice.designation }}</button>
+                            </form>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+                {% if show_epoch_control %}
+                {% comment %}
+                  Its own form: the sidebar form cannot be nested here, and the
+                  hidden fields carry the other classification settings so a
+                  switch changes the epoch and nothing else.
+                {% endcomment %}
+                <form method="post" class="form-inline mb-2 by-name-aware" id="epoch-form">
+                    {% csrf_token %}
+                    {% for name, value in preserved_fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+                    <label class="mr-2 mb-0" for="id_source_spectrum_id">Spectrum epoch</label>
+                    {{ form.source_spectrum_id }}
+                    <button type="submit" class="btn btn-outline-primary ml-2">Classify this epoch</button>
+                </form>
+                {% endif %}
+            </section>
             {% if success %}
             <div class="card mb-4 shadow-sm">
                 <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
@@ -669,6 +751,39 @@
 {% endif %}
 
 <script>
+(function() {
+    // A by-name lookup reads WISeREP and takes seconds, and the page does not
+    // change while it does. The submit is disabled so an impatient second
+    // click cannot occupy the other worker, and the status names the
+    // designation being looked up, announced politely.
+    function designationIn(form) {
+        var field = form.querySelector('[name="supernova_name"]');
+        return field && field.value ? field.value.trim() : "";
+    }
+    document.addEventListener("DOMContentLoaded", function() {
+        var status = document.getElementById("lookup-status");
+        var forms = document.querySelectorAll("form.by-name-aware");
+        Array.prototype.forEach.call(forms, function(form) {
+            form.addEventListener("submit", function() {
+                var designation = designationIn(form);
+                if (!designation) return;
+                var submits = form.querySelectorAll('button[type="submit"]');
+                Array.prototype.forEach.call(submits, function(button) {
+                    button.disabled = true;
+                });
+                if (status) {
+                    status.textContent = "Looking up " + designation +
+                        " in WISeREP. This takes a few seconds.";
+                }
+            });
+        });
+        {% if by_name_submitted %}
+        var report = document.getElementById("lookup-report");
+        if (report) report.focus();
+        {% endif %}
+    });
+})();
+
     function clearForm() {
         // Reloading the page via GET request is the cleanest way to:
         // 1. Reset all form inputs to their factory defaults (clearing user entries like Redshift).

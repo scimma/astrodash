@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 
 HTTP_400_BAD_REQUEST = HTTPStatus.BAD_REQUEST.value
@@ -142,20 +142,27 @@ class AmbiguousDesignationException(AppException):
     """Raised when a submitted designation matches more than one object.
 
     The by-name lookup refuses rather than guessing which object the
-    researcher meant, and carries the matching designations so the surface can
-    offer the choice.
+    researcher meant, and carries the matching objects so the surface can offer
+    a choice the researcher can actually make. The type and redshift travel with
+    each designation because a list of bare names asks someone to pick between
+    things they cannot tell apart.
     """
 
-    def __init__(self, name: str, designations: Sequence[str]) -> None:
+    def __init__(self, name: str, objects: Sequence[Mapping[str, object]]) -> None:
         """Build the failure.
 
         Args:
             name: The designation the researcher submitted.
-            designations: The distinct objects the source matched, as the
-                source spells them.
+            objects: The distinct objects the source matched, each a mapping of
+                ``designation`` as the source spells it, ``object_type`` and
+                ``redshift``. The latter two may be empty or None when the
+                source records none.
         """
         self.name = name
-        self.designations = tuple(designations)
+        self.objects = tuple(dict(item) for item in objects)
+        self.designations = tuple(
+            str(item.get("designation", "")) for item in self.objects
+        )
         listed = ", ".join(self.designations)
         super().__init__(
             f"Designation '{name}' matches more than one object ({listed}). "

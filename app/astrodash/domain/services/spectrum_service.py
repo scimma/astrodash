@@ -126,6 +126,29 @@ def candidate_from_record(record: Mapping[str, Any]) -> SpectrumCandidate:
     )
 
 
+def select_record(
+    records: List[Dict[str, Any]], source_spectrum_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Pick which record of a ranked candidate set to serve.
+
+    Args:
+        records: The ranked candidate records, earliest first.
+        source_spectrum_id: The source's identifier for the spectrum the
+            researcher chose, or ``None`` to take the automatic selection.
+
+    Returns:
+        The record carrying that identifier, or the first -- the earliest
+        eligible observation (R6) -- when no identifier was given or the set
+        does not hold it.
+    """
+    if source_spectrum_id:
+        wanted = str(source_spectrum_id)
+        for record in records:
+            if str(record.get("source_spectrum_id")) == wanted:
+                return record
+    return records[0]
+
+
 # Failure classes the seam re-raises unchanged, each carrying its own status.
 # A class missing here is relabelled as a spectrum validation error by
 # :meth:`SpectrumService.get_spectrum_data`, which is why every by-name
@@ -195,7 +218,9 @@ class SpectrumService:
 
         return spectrum
 
-    async def get_spectrum_by_name(self, object_name: str) -> Spectrum:
+    async def get_spectrum_by_name(
+        self, object_name: str, source_spectrum_id: Optional[str] = None
+    ) -> Spectrum:
         """Read the spectrum a submitted object designation resolves to.
 
         Resolution is looked up before it is performed -- cache, then the
@@ -207,6 +232,9 @@ class SpectrumService:
         Args:
             object_name: The designation the researcher submitted, in any
                 accepted form (``2002er``, ``SN2002er``, ``ATLAS26hqe``).
+            source_spectrum_id: The source's identifier for the epoch the
+                researcher chose, when they chose one (R8). Omitted, the
+                automatic selection stands.
 
         Returns:
             The spectrum of the selected epoch, carrying the object
@@ -238,7 +266,7 @@ class SpectrumService:
                 self._resolve_candidate_records, object_name, normalized
             )
 
-        selected = candidate_from_record(records[0])
+        selected = candidate_from_record(select_record(records, source_spectrum_id))
         logger.debug(
             "Selected WISeREP spectrum %s for %r (%s, %s)",
             selected.spectrum_id,
@@ -326,7 +354,15 @@ class SpectrumService:
         result = rank_candidates(rows, object_name)
         if result.refusal is RefusalReason.AMBIGUOUS_NAME:
             raise AmbiguousDesignationException(
-                object_name, [summary.designation for summary in result.objects]
+                object_name,
+                [
+                    {
+                        "designation": summary.designation,
+                        "object_type": summary.object_type,
+                        "redshift": summary.redshift,
+                    }
+                    for summary in result.objects
+                ],
             )
         if not result.candidates:
             raise NoEligibleSpectrumException(object_name)
@@ -422,7 +458,10 @@ class SpectrumService:
             )
 
     async def get_spectrum_data(
-        self, file: Optional[Any] = None, object_name: Optional[str] = None
+        self,
+        file: Optional[Any] = None,
+        object_name: Optional[str] = None,
+        source_spectrum_id: Optional[str] = None,
     ) -> Spectrum:
         """Read a spectrum from an upload or from an object designation.
 
@@ -430,6 +469,8 @@ class SpectrumService:
             file: An uploaded file object, when the researcher supplied one.
             object_name: The object designation to resolve against WISeREP,
                 when no file was supplied.
+            source_spectrum_id: The source's identifier for the epoch the
+                researcher chose, when they chose one. Ignored for an upload.
 
         Returns:
             The spectrum read from whichever source was supplied.
@@ -471,7 +512,9 @@ class SpectrumService:
                 return await self.get_spectrum_from_file(file)
             elif object_name:
                 logger.debug(f"Processing object designation: {object_name}")
-                return await self.get_spectrum_by_name(object_name)
+                return await self.get_spectrum_by_name(
+                    object_name, source_spectrum_id=source_spectrum_id
+                )
             else:
                 raise ValidationException(
                     "No spectrum file or object designation provided"

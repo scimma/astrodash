@@ -34,7 +34,9 @@ import numpy as np
 from astrodash.config.settings import get_settings
 from astrodash.core.exceptions import ValidationException
 from astrodash.domain.services.batch_processing_service import BatchProcessingService
+from astrodash.domain.models.spectrum import Spectrum
 from astrodash.forms import (
+    REDSHIFT_REQUIRED_MESSAGE,
     BatchForm,
     ClassifyForm,
     ModelSelectionForm,
@@ -227,7 +229,17 @@ class UnlistedModelSurfaceTests(TestCase):
 
 
 class ClassifyFormRedshiftParityTests(TestCase):
-    """AE2 / AE3: Transformer requires a redshift; DASH does not."""
+    """AE2 / AE3: Transformer requires a redshift; DASH does not.
+
+    Which *layer* applies the requirement depends on the input. An uploaded
+    spectrum carries no redshift of its own, so the form refuses it at
+    validation. A submitted object designation does: the by-name lookup
+    populates the field from WISeREP, so the form records that the gate is
+    deferred and the view applies it after resolution, against the resolved
+    value rather than the empty submitted one. Both halves are asserted here,
+    and the post-resolution half is asserted at the flow level in
+    :class:`RedshiftInputPolicyFlowTests`.
+    """
 
     def _base_data(self, model):
         return {
@@ -238,19 +250,75 @@ class ClassifyFormRedshiftParityTests(TestCase):
             "max_wave": 10000,
         }
 
-    def test_transformer_requires_redshift(self):
-        form = ClassifyForm(data=self._base_data("transformer"))
+    def _upload_data(self, model):
+        """Return the same submission with an uploaded spectrum instead of a name.
+
+        Args:
+            model: The ``model`` value to submit.
+
+        Returns:
+            The POST data, carrying no object designation.
+        """
+        data = self._base_data(model)
+        data.pop("supernova_name")
+        return data
+
+    def _upload_files(self):
+        """Return an uploaded two-column spectrum for the file path.
+
+        Returns:
+            A files mapping for :class:`ClassifyForm`.
+        """
+        return {
+            "file": SimpleUploadedFile(
+                "spectrum.dat", b"4000 1.0\n4001 1.0\n", content_type="text/plain"
+            )
+        }
+
+    def assert_upload_refused_without_redshift(self, model):
+        """Assert an upload under a requiring model is refused at validation.
+
+        Args:
+            model: The model whose declared policy requires a redshift.
+
+        Returns:
+            The refused form, so a caller can inspect its errors.
+        """
+        form = ClassifyForm(data=self._upload_data(model), files=self._upload_files())
         self.assertFalse(form.is_valid())
         self.assertIn("redshift", form.errors)
         self.assertTrue(
             any("Redshift is required" in e for e in form.errors["redshift"])
         )
+        return form
+
+    def assert_name_defers_the_requirement(self, model):
+        """Assert a name-only submission under a requiring model defers the gate.
+
+        Args:
+            model: The model whose declared policy requires a redshift.
+        """
+        form = ClassifyForm(data=self._base_data(model))
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertTrue(
+            form.redshift_required_deferred,
+            "the requirement was neither applied nor deferred, so nothing "
+            "would stop this model classifying without a redshift",
+        )
+
+    def test_transformer_requires_redshift_for_an_uploaded_spectrum(self):
+        self.assert_upload_refused_without_redshift("transformer")
+
+    def test_transformer_defers_the_requirement_for_a_submitted_name(self):
+        self.assert_name_defers_the_requirement("transformer")
 
     def test_required_redshift_message_names_no_model(self):
         """R13: the message follows the policy, so it names no model literally."""
-        form = ClassifyForm(data=self._base_data("transformer"))
-        self.assertFalse(form.is_valid())
-        for error in form.errors["redshift"]:
+        form = self.assert_upload_refused_without_redshift("transformer")
+        # The constant is checked alongside the rendered errors because the
+        # deferred gate raises the same message from the view, where no form
+        # error list carries it.
+        for error in list(form.errors["redshift"]) + [REDSHIFT_REQUIRED_MESSAGE]:
             self.assertNotIn("Transformer", error)
             self.assertNotIn("transformer", error)
             self.assertNotIn("Dash", error)
@@ -258,22 +326,20 @@ class ClassifyFormRedshiftParityTests(TestCase):
     def test_dash_does_not_require_redshift(self):
         form = ClassifyForm(data=self._base_data("dash"))
         self.assertTrue(form.is_valid(), form.errors)
+        self.assertFalse(form.redshift_required_deferred)
 
     def test_1dcnn_z_and_latent_z_require_redshift(self):
         for model in ("1dCNN_z", "latent_z"):
             with self.subTest(model=model):
-                form = ClassifyForm(data=self._base_data(model))
-                self.assertFalse(form.is_valid())
-                self.assertIn("redshift", form.errors)
-                self.assertTrue(
-                    any("Redshift is required" in e for e in form.errors["redshift"])
-                )
+                self.assert_upload_refused_without_redshift(model)
+                self.assert_name_defers_the_requirement(model)
 
     def test_1dcnn_noz_and_latent_noz_do_not_require_redshift(self):
         for model in ("1dCNN_noz", "latent_noz"):
             with self.subTest(model=model):
                 form = ClassifyForm(data=self._base_data(model))
                 self.assertTrue(form.is_valid(), form.errors)
+                self.assertFalse(form.redshift_required_deferred)
 
 
 class BatchRlapParityTests(TestCase):
@@ -993,13 +1059,67 @@ class RedshiftInputPolicyFlowTests(TestCase):
         self.assertNotIn("redshift", resp.context["form"].errors)
 
     def test_required_policy_rejects_missing_redshift_in_classify(self):
-        """The gate follows the policy, not the model: DASH made required fails."""
+        """The gate follows the policy, not the model: DASH made required fails.
+
+        A name-only submission is judged after resolution, so this drives the
+        whole flow: the lookup answers a spectrum whose source records no
+        redshift, and the view must refuse rather than classify it at zero.
+        """
+        session = self.client.session
+        session["selected_model_type"] = "dash"
+        session.save()
+        resolved = Spectrum(
+            x=[4000.0 + index for index in range(200)],
+            y=[1.0] * 200,
+            redshift=None,
+            object_designation="SN 2011fe",
+            source_name="wiserep",
+            source_spectrum_id="5001",
+        )
+        processing_svc = MagicMock(process_spectrum_with_params=AsyncMock())
+        classification_svc = MagicMock(classify_spectrum=AsyncMock())
+        with patch.object(
+            model_registry,
+            "MODELS",
+            self._roster(model_registry.REDSHIFT_INPUT_REQUIRED),
+        ), patch(
+            "astrodash.ui_views.get_spectrum_service",
+            return_value=MagicMock(get_spectrum_data=AsyncMock(return_value=resolved)),
+        ), patch(
+            "astrodash.ui_views.get_spectrum_processing_service",
+            return_value=processing_svc,
+        ), patch(
+            "astrodash.ui_views.get_classification_service",
+            return_value=classification_svc,
+        ):
+            resp = self.client.post(
+                reverse("astrodash:classify"), data=self._base_classify_data("dash")
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("redshift", resp.context["form"].errors)
+        self.assertIn(REDSHIFT_REQUIRED_MESSAGE, resp.content.decode())
+        self.assertEqual(classification_svc.classify_spectrum.await_count, 0)
+        self.assertEqual(processing_svc.process_spectrum_with_params.await_count, 0)
+
+    def test_required_policy_rejects_an_upload_missing_redshift_in_classify(self):
+        """On the file path the same policy still refuses at validation."""
+        data = self._base_classify_data("dash")
+        data.pop("supernova_name")
         with patch.object(
             model_registry,
             "MODELS",
             self._roster(model_registry.REDSHIFT_INPUT_REQUIRED),
         ):
-            form = ClassifyForm(data=self._base_classify_data("dash"))
+            form = ClassifyForm(
+                data=data,
+                files={
+                    "file": SimpleUploadedFile(
+                        "spectrum.dat",
+                        b"4000 1.0\n4001 1.0\n",
+                        content_type="text/plain",
+                    )
+                },
+            )
             self.assertFalse(form.is_valid())
             self.assertIn("redshift", form.errors)
 
