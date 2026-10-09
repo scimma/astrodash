@@ -84,3 +84,23 @@ class SpectrumRepository(ABC):
             SpectrumValidationException: If parsed spectrum is invalid
         """
         pass
+
+    def get_by_designation_and_spectrum_id(
+        self, object_designation: str, source_spectrum_id: str
+    ) -> Optional[Spectrum]:
+        """Retrieve a retained spectrum by object and source spectrum id.
+
+        One object may have several retained epochs, so a retained spectrum is
+        identified upstream by its object designation together with the
+        source's own identifier for that spectrum. Implementations that retain
+        nothing leave this returning ``None``.
+
+        Args:
+            object_designation: The designation of the object the spectrum
+                belongs to.
+            source_spectrum_id: The source's identifier for the spectrum.
+
+        Returns:
+            The Spectrum if one is retained for that pair, None otherwise.
+        """
+        return None
