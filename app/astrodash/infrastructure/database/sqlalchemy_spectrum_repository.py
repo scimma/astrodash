@@ -24,7 +24,7 @@ class SQLAlchemySpectrumRepository(SpectrumRepository):
 
             if existing:
                 # Update existing record
-                existing.osc_ref = spectrum.osc_ref
+                existing.osc_ref = spectrum.object_designation
                 existing.file_name = spectrum.file_name
                 existing.x = spectrum.x
                 existing.y = spectrum.y
@@ -37,7 +37,7 @@ class SQLAlchemySpectrumRepository(SpectrumRepository):
                 # Insert new record
                 db_spectrum = SpectrumDB(
                     id=spectrum.id,
-                    osc_ref=spectrum.osc_ref,
+                    osc_ref=spectrum.object_designation,
                     file_name=spectrum.file_name,
                     x=spectrum.x,
                     y=spectrum.y,
@@ -79,7 +79,7 @@ class SQLAlchemySpectrumRepository(SpectrumRepository):
         """Convert database model to domain model."""
         return Spectrum(
             id=db_spectrum.id,
-            osc_ref=db_spectrum.osc_ref,
+            object_designation=db_spectrum.osc_ref,
             file_name=db_spectrum.file_name,
             x=db_spectrum.x,
             y=db_spectrum.y,

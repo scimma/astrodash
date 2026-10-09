@@ -2,57 +2,149 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional, List
+from datetime import datetime
+from typing import Any, Dict, Optional, List
+
+from django.utils import timezone
 
 from astrodash.domain.models.spectrum import Spectrum
 from astrodash.domain.models.user_model import UserModel
 from astrodash.domain.repositories.spectrum_repository import SpectrumRepository
 from astrodash.domain.repositories.model_repository import ModelRepository
-from astrodash.models import SpectrumRecord, UserModelRecord
+from astrodash.models import (
+    SpectrumCandidateSetRecord,
+    SpectrumRecord,
+    UserModelRecord,
+)
 
 
 class DjangoSpectrumRepository(SpectrumRepository):
     """Persist spectra using the AstroDash Django database."""
 
     def save(self, spectrum: Spectrum) -> Spectrum:
+        """Persist a spectrum, keyed by designation plus source spectrum id.
+
+        A spectrum carrying both an object designation and a source spectrum
+        identifier updates the row already retained for that pair, so repeated
+        retrievals of one epoch do not accumulate rows while distinct epochs of
+        the same object coexist.
+
+        Args:
+            spectrum: The spectrum to persist.
+
+        Returns:
+            The spectrum, with its id populated.
+        """
+        if spectrum.object_designation and spectrum.source_spectrum_id:
+            retained = (
+                SpectrumRecord.objects.filter(
+                    object_designation=spectrum.object_designation,
+                    source_spectrum_id=spectrum.source_spectrum_id,
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if retained is not None:
+                spectrum.id = str(retained.id)
         if spectrum.id is None:
             spectrum.id = str(uuid.uuid4())
         defaults = {
-            "osc_ref": spectrum.osc_ref,
+            "object_designation": spectrum.object_designation,
+            "source_name": spectrum.source_name,
+            "source_spectrum_id": spectrum.source_spectrum_id,
             "file_name": spectrum.file_name,
             "x": spectrum.x,
             "y": spectrum.y,
             "redshift": spectrum.redshift,
             "meta": spectrum.meta or {},
         }
+        if spectrum.retrieved_at is not None:
+            defaults["created_at"] = spectrum.retrieved_at
         SpectrumRecord.objects.update_or_create(id=spectrum.id, defaults=defaults)
         return spectrum
 
     def get_by_id(self, spectrum_id: str) -> Optional[Spectrum]:
+        """Retrieve a spectrum by its storage identifier.
+
+        Args:
+            spectrum_id: The storage identifier.
+
+        Returns:
+            The spectrum if a row holds that identifier, None otherwise.
+        """
         try:
             record = SpectrumRecord.objects.get(id=spectrum_id)
         except SpectrumRecord.DoesNotExist:
             return None
-        return Spectrum(
-            id=str(record.id),
-            osc_ref=record.osc_ref,
-            file_name=record.file_name,
-            x=record.x,
-            y=record.y,
-            redshift=record.redshift,
-            meta=record.meta or {},
-        )
+        return self._to_domain(record)
 
     def get_by_osc_ref(self, osc_ref: str) -> Optional[Spectrum]:
+        """Retrieve the most recently written spectrum for a designation.
+
+        Args:
+            osc_ref: The object designation to look up.
+
+        Returns:
+            The most recently written spectrum for that designation, or None.
+        """
         if not osc_ref:
             return None
         try:
-            record = SpectrumRecord.objects.filter(osc_ref=osc_ref).latest("created_at")
+            record = SpectrumRecord.objects.filter(object_designation=osc_ref).latest(
+                "created_at"
+            )
         except SpectrumRecord.DoesNotExist:
             return None
+        return self._to_domain(record)
+
+    def get_by_designation_and_spectrum_id(
+        self, object_designation: str, source_spectrum_id: str
+    ) -> Optional[Spectrum]:
+        """Retrieve the retained spectrum for one epoch of one object.
+
+        Rows written before source identities were recorded carry no source
+        spectrum identifier, so they are never returned here.
+
+        Args:
+            object_designation: Designation of the object.
+            source_spectrum_id: The source's identifier for the spectrum.
+
+        Returns:
+            The retained spectrum for that pair, or None.
+        """
+        if not object_designation or not source_spectrum_id:
+            return None
+        record = (
+            SpectrumRecord.objects.filter(
+                object_designation=object_designation,
+                source_spectrum_id=source_spectrum_id,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if record is None:
+            return None
+        return self._to_domain(record)
+
+    def get_from_file(self, file):  # pragma: no cover - delegated to FileSpectrumRepository
+        raise NotImplementedError("Django repository does not parse files")
+
+    @staticmethod
+    def _to_domain(record: SpectrumRecord) -> Spectrum:
+        """Map a stored record onto the domain spectrum.
+
+        Args:
+            record: The stored spectrum record.
+
+        Returns:
+            The equivalent domain spectrum.
+        """
         return Spectrum(
             id=str(record.id),
-            osc_ref=record.osc_ref,
+            object_designation=record.object_designation,
+            source_name=record.source_name,
+            source_spectrum_id=record.source_spectrum_id,
+            retrieved_at=record.created_at,
             file_name=record.file_name,
             x=record.x,
             y=record.y,
@@ -60,8 +152,60 @@ class DjangoSpectrumRepository(SpectrumRepository):
             meta=record.meta or {},
         )
 
-    def get_from_file(self, file):  # pragma: no cover - delegated to FileSpectrumRepository
-        raise NotImplementedError("Django repository does not parse files")
+
+class DjangoCandidateSetRepository:
+    """Persist resolved candidate sets using the AstroDash Django database."""
+
+    def save(
+        self,
+        normalized_name: str,
+        candidates: List[Dict[str, Any]],
+        resolved_at: Optional[datetime] = None,
+    ) -> None:
+        """Store the ranked candidate set resolved for a submitted name.
+
+        Storing a set for a name that already has one replaces it, so a
+        re-resolution does not accumulate duplicates.
+
+        Args:
+            normalized_name: The submitted object name, already normalized by
+                the caller.
+            candidates: The ranked candidates, each a mapping carrying
+                ``source_spectrum_id``, ``observation_date``, ``instrument``,
+                ``quality``, ``redshift`` and ``download_url``.
+            resolved_at: Time the set was resolved; defaults to now.
+
+        Returns:
+            None.
+        """
+        SpectrumCandidateSetRecord.objects.update_or_create(
+            normalized_name=normalized_name,
+            defaults={
+                "candidates": candidates,
+                "resolved_at": resolved_at or timezone.now(),
+            },
+        )
+
+    def get(self, normalized_name: str) -> Optional[Dict[str, Any]]:
+        """Retrieve the candidate set stored for a submitted name.
+
+        Args:
+            normalized_name: The submitted object name, already normalized by
+                the caller.
+
+        Returns:
+            A mapping with ``candidates`` and ``resolved_at``, or None when no
+            set is stored for that name.
+        """
+        if not normalized_name:
+            return None
+        try:
+            record = SpectrumCandidateSetRecord.objects.get(
+                normalized_name=normalized_name
+            )
+        except SpectrumCandidateSetRecord.DoesNotExist:
+            return None
+        return {"candidates": record.candidates, "resolved_at": record.resolved_at}
 
 
 class DjangoModelRepository(ModelRepository):

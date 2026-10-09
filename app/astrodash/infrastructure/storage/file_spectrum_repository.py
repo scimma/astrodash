@@ -36,7 +36,7 @@ class FileSpectrumRepository(SpectrumRepository):
             with open(path, "w") as f:
                 json.dump({
                     "id": spectrum.id,
-                    "osc_ref": spectrum.osc_ref,
+                    "object_designation": spectrum.object_designation,
                     "file_name": spectrum.file_name,
                     "x": spectrum.x,
                     "y": spectrum.y,
@@ -57,7 +57,7 @@ class FileSpectrumRepository(SpectrumRepository):
             data = json.load(f)
         return Spectrum(
             id=data["id"],
-            osc_ref=data.get("osc_ref"),
+            object_designation=data.get("object_designation"),
             file_name=data.get("file_name"),
             x=data["x"],
             y=data["y"],
@@ -546,7 +546,8 @@ class OSCSpectrumRepository(SpectrumRepository):
                 x=wave.tolist(),  # Convert numpy array to list
                 y=flux.tolist(),   # Convert numpy array to list
                 redshift=redshift,
-                osc_ref=osc_ref,
+                object_designation=osc_ref,
+                source_name="osc",
                 file_name=f"{obj_name}.json",
                 meta={"source": "osc", "object_name": obj_name}
             )
