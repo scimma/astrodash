@@ -63,9 +63,8 @@ APP_DIR = Path(__file__).resolve().parent.parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from astrodash.infrastructure.wiserep.parsing import (  # noqa: E402,F401
+from astrodash.infrastructure.wiserep.parsing import (  # noqa: E402
     USER_AGENT,
-    clean_csv_text,
     compact,
     extract_csv_text_from_zip,
     find_column,

@@ -42,6 +42,7 @@ from urllib3.util.retry import Retry
 from astrodash.config.settings import Settings, get_settings
 from astrodash.core.exceptions import ExternalServiceException
 from astrodash.infrastructure.wiserep.parsing import (
+    SPEC_ID_ALIASES,
     MAX_UNCOMPRESSED_BYTES,
     USER_AGENT,
     extract_csv_text_from_zip,
@@ -74,7 +75,6 @@ _STREAM_CHUNK_BYTES = 64 * 1024
 
 # Known spellings of the column that identifies one spectrum. Used to tell a
 # repeated row from a new one; columns are matched by name, never position.
-_SPEC_ID_ALIASES = ("Spec. ID", "Spec ID", "Spectrum ID")
 
 
 class WiserepUnreachableError(ExternalServiceException):
@@ -250,9 +250,7 @@ class WiserepClient:
 
             page_rows = self._fetch_page(designation, page)
             spec_id_column = (
-                find_column(page_rows[0].keys(), _SPEC_ID_ALIASES)
-                if page_rows
-                else None
+                find_column(page_rows[0].keys(), SPEC_ID_ALIASES) if page_rows else None
             )
 
             unseen = 0

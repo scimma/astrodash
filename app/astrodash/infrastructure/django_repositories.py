@@ -18,6 +18,31 @@ from astrodash.models import (
 )
 
 
+def _latest_for(object_designation: str, source_spectrum_id: str):
+    """Return the most recently written record for one epoch of one object.
+
+    Migration 0003 makes the pair unique when neither part is NULL, so this
+    normally matches at most one row; the ordering is kept because rows written
+    before source identities existed carry NULL and do not take part in that
+    constraint.
+
+    Args:
+        object_designation: Designation of the object.
+        source_spectrum_id: The source's identifier for the spectrum.
+
+    Returns:
+        The matching SpectrumRecord, or None.
+    """
+    return (
+        SpectrumRecord.objects.filter(
+            object_designation=object_designation,
+            source_spectrum_id=source_spectrum_id,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+
 class DjangoSpectrumRepository(SpectrumRepository):
     """Persist spectra using the AstroDash Django database."""
 
@@ -36,13 +61,8 @@ class DjangoSpectrumRepository(SpectrumRepository):
             The spectrum, with its id populated.
         """
         if spectrum.object_designation and spectrum.source_spectrum_id:
-            retained = (
-                SpectrumRecord.objects.filter(
-                    object_designation=spectrum.object_designation,
-                    source_spectrum_id=spectrum.source_spectrum_id,
-                )
-                .order_by("-created_at")
-                .first()
+            retained = _latest_for(
+                spectrum.object_designation, spectrum.source_spectrum_id
             )
             if retained is not None:
                 spectrum.id = str(retained.id)
@@ -78,21 +98,21 @@ class DjangoSpectrumRepository(SpectrumRepository):
             return None
         return self._to_domain(record)
 
-    def get_by_osc_ref(self, osc_ref: str) -> Optional[Spectrum]:
+    def get_by_osc_ref(self, object_designation: str) -> Optional[Spectrum]:
         """Retrieve the most recently written spectrum for a designation.
 
         Args:
-            osc_ref: The object designation to look up.
+            object_designation: The object designation to look up.
 
         Returns:
             The most recently written spectrum for that designation, or None.
         """
-        if not osc_ref:
+        if not object_designation:
             return None
         try:
-            record = SpectrumRecord.objects.filter(object_designation=osc_ref).latest(
-                "created_at"
-            )
+            record = SpectrumRecord.objects.filter(
+                object_designation=object_designation
+            ).latest("created_at")
         except SpectrumRecord.DoesNotExist:
             return None
         return self._to_domain(record)
@@ -114,14 +134,7 @@ class DjangoSpectrumRepository(SpectrumRepository):
         """
         if not object_designation or not source_spectrum_id:
             return None
-        record = (
-            SpectrumRecord.objects.filter(
-                object_designation=object_designation,
-                source_spectrum_id=source_spectrum_id,
-            )
-            .order_by("-created_at")
-            .first()
-        )
+        record = _latest_for(object_designation, source_spectrum_id)
         if record is None:
             return None
         return self._to_domain(record)

@@ -30,7 +30,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Mapping, Sequence
 
-from astrodash.infrastructure.wiserep.parsing import compact, find_column
+from astrodash.infrastructure.wiserep.parsing import (
+    SPEC_ID_ALIASES,
+    compact,
+    find_column,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +201,7 @@ class _Columns:
         )
         self.object_type = find_column(fields, ("Obj. Type", "Object Type", "Type"))
         self.redshift = find_column(fields, ("Redshift", "Obj. Redshift"))
-        self.spectrum_id = find_column(fields, ("Spec. ID", "Spectrum ID"))
+        self.spectrum_id = find_column(fields, SPEC_ID_ALIASES)
         self.observation_date = find_column(
             fields, ("Obs-date", "Obs. date", "Observation date")
         )

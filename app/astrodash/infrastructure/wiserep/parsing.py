@@ -115,6 +115,14 @@ def find_column(
     return None
 
 
+# The export's spectrum-identifier column. One list, because the client dedupes
+# paginated rows by this column while the ranker uses it as a candidate's
+# identity -- if the two drifted, a row could be deduped under one spelling and
+# identified under another. ``normalize_col`` folds punctuation and case, so
+# "Spec. ID" and "Spec ID" are already the same key.
+SPEC_ID_ALIASES = ("Spec. ID", "Spectrum ID")
+
+
 def clean_csv_text(text: str) -> str:
     """Strip what confuses :class:`csv.DictReader` at the start of an export.
 

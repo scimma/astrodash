@@ -69,15 +69,9 @@ class WiserepUnusableSpectrumError(SpectrumValidationException):
     as spectrum data, and a spectrum leaving fewer than
     :data:`MIN_WINDOW_POINTS` points inside the usable window. It is
     deliberately distinct from WISeREP being unreachable.
+
+    The message says which spectrum was being read and why it is unusable.
     """
-
-    def __init__(self, message: str) -> None:
-        """Build the failure.
-
-        Args:
-            message: Which spectrum was being read and why it is unusable.
-        """
-        super().__init__(message)
 
 
 def allowed_host(settings: Settings) -> str:
