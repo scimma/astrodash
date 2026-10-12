@@ -43,10 +43,11 @@ import asyncio
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from django.core.cache import cache
 from django.db import Error as DatabaseError
+from django.db import connections
 from django.utils import timezone
 
 from astrodash.config.logging import get_logger
@@ -346,6 +347,31 @@ _INFRASTRUCTURE_FAILURE_MESSAGE = (
 _UNCLASSIFIED_FAILURE_MESSAGE = "Spectrum data error: the spectrum could not be read."
 
 
+def _in_db_thread(work: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run database work on a worker thread and close that thread's connections.
+
+    ``asyncio.to_thread`` runs each call on a thread from the running loop's
+    executor, and Django opens a *new* connection per thread. Only the request
+    thread's connections are closed when the request ends, so a connection
+    opened on a worker thread stays open until the interpreter finalizes it.
+    These views call ``asyncio.run`` per request, which builds and tears down a
+    fresh executor each time, so without this the process accumulates one
+    abandoned backend per worker thread.
+
+    Args:
+        work: The callable to run, which may touch the database.
+        *args: Positional arguments for ``work``.
+        **kwargs: Keyword arguments for ``work``.
+
+    Returns:
+        Whatever ``work`` returns.
+    """
+    try:
+        return work(*args, **kwargs)
+    finally:
+        connections.close_all()
+
+
 class SpectrumService:
     """Reads spectra from an upload or from WISeREP by object designation."""
 
@@ -473,10 +499,12 @@ class SpectrumService:
                 f"'{object_name}' is not a usable object designation"
             )
 
-        records = await asyncio.to_thread(self._load_candidate_records, normalized)
+        records = await asyncio.to_thread(
+            _in_db_thread, self._load_candidate_records, normalized
+        )
         if records is None:
             records = await asyncio.to_thread(
-                self._resolve_once, object_name, normalized
+                _in_db_thread, self._resolve_once, object_name, normalized
             )
 
         selected = candidate_from_record(select_record(records, source_spectrum_id))
@@ -488,7 +516,9 @@ class SpectrumService:
             selected.instrument,
         )
 
-        retained = await asyncio.to_thread(self._retained_spectrum, selected)
+        retained = await asyncio.to_thread(
+            _in_db_thread, self._retained_spectrum, selected
+        )
         if retained is not None:
             logger.info(
                 "Serving retained spectrum %s for %r, retrieved %s",
@@ -501,7 +531,7 @@ class SpectrumService:
         spectrum = await asyncio.to_thread(
             self.wiserep_repo.get_for_candidate, selected
         )
-        return await asyncio.to_thread(self.db_repo.save, spectrum)
+        return await asyncio.to_thread(_in_db_thread, self.db_repo.save, spectrum)
 
     def _load_candidate_records(
         self, normalized_name: str
@@ -987,7 +1017,9 @@ class SpectrumService:
             validate_spectrum(spectrum.x, spectrum.y, spectrum.redshift)
 
             # Save to database using async wrapper
-            saved_spectrum = await asyncio.to_thread(self.db_repo.save, spectrum)
+            saved_spectrum = await asyncio.to_thread(
+                _in_db_thread, self.db_repo.save, spectrum
+            )
 
             logger.debug(f"Successfully saved spectrum {spectrum.id} to database")
             return saved_spectrum
