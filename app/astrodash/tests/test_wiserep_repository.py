@@ -22,6 +22,7 @@ from astrodash.infrastructure.storage.wiserep_spectrum_repository import (
     WiserepSpectrumRepository,
     WiserepUnusableSpectrumError,
     allowed_host,
+    allowed_port,
     make_host_pinned_session,
 )
 from astrodash.infrastructure.wiserep.parsing import (
@@ -46,6 +47,18 @@ REAL_SPECTRUM_IN_WINDOW_POINTS = 1282
 HOST = "www.wiserep.org"
 
 SETTINGS = SimpleNamespace(wiserep_base_url=f"https://{HOST}")
+
+#: Settings complete enough for the repository to build its own transport, so
+#: a case can exercise the default download path rather than a stub. The
+#: request interval is zeroed because nothing here reaches the network or the
+#: cache.
+TRANSPORT_SETTINGS = SimpleNamespace(
+    wiserep_base_url=f"https://{HOST}",
+    wiserep_connect_timeout=1.0,
+    wiserep_read_timeout=1.0,
+    wiserep_download_deadline_seconds=5.0,
+    wiserep_min_request_interval_seconds=0.0,
+)
 
 
 def ascii_spectrum(in_window: int, below_window: int = 0) -> bytes:
@@ -319,3 +332,105 @@ class DownloadTargetTests(SimpleTestCase):
         with self.assertRaises(WiserepUnusableSpectrumError):
             session.get(f"https://{HOST}/system/files/a.dat")
         self.assertEqual(adapter.urls, [f"https://{HOST}/system/files/a.dat"])
+
+    def test_url_on_another_port_is_refused_without_a_request(self) -> None:
+        """An on-host https URL on another port reaches a different service."""
+        client = StubClient()
+        with self.assertRaises(WiserepUnusableSpectrumError):
+            repository(client).get_for_candidate(
+                candidate(ascii_url=f"https://{HOST}:8443/system/files/a.dat")
+            )
+        self.assertEqual(client.urls, [])
+
+    def test_url_naming_the_default_port_explicitly_is_accepted(self) -> None:
+        """Spelling out port 443 names the same origin and stays usable."""
+        client = StubClient([ascii_spectrum(150)])
+        spectrum = repository(client).get_for_candidate(
+            candidate(ascii_url=f"https://{HOST}:443/system/files/a.dat")
+        )
+        self.assertEqual(len(spectrum.x), 150)
+
+    def test_url_with_an_unreadable_port_is_refused_without_a_request(self) -> None:
+        """A port that will not parse is refused rather than guessed at."""
+        client = StubClient()
+        with self.assertRaises(WiserepUnusableSpectrumError):
+            repository(client).get_for_candidate(
+                candidate(ascii_url=f"https://{HOST}:443a/system/files/a.dat")
+            )
+        self.assertEqual(client.urls, [])
+
+    def test_redirect_to_another_port_is_not_followed(self) -> None:
+        """A same-host redirect changing the port is refused, not followed."""
+        adapter = RedirectAdapter(f"https://{HOST}:8443/a.dat")
+        session = make_host_pinned_session(
+            allowed_host(SETTINGS), allowed_port(SETTINGS)
+        )
+        session.mount("https://", adapter)
+        with self.assertRaises(WiserepUnusableSpectrumError):
+            session.get(f"https://{HOST}/system/files/a.dat")
+        self.assertEqual(adapter.urls, [f"https://{HOST}/system/files/a.dat"])
+
+
+class DefaultTransportTargetTests(SimpleTestCase):
+    """The transport the repository builds for itself carries the same pin.
+
+    The cases above inject a stub transport, which leaves the constructor's
+    own ``WiserepClient`` over a host-pinned session unexercised. These build
+    the repository with no client, so the session actually used for downloads
+    is the one under test.
+    """
+
+    def repository(self) -> WiserepSpectrumRepository:
+        """Build a repository over its own default transport.
+
+        Returns:
+            A repository pinned to the test origin, holding the client and
+            session it built for itself.
+        """
+        return WiserepSpectrumRepository(settings=TRANSPORT_SETTINGS)
+
+    def mount_redirect(
+        self, repo: WiserepSpectrumRepository, location: str
+    ) -> RedirectAdapter:
+        """Answer every request the repository's own session issues.
+
+        Args:
+            repo: The repository whose default session should be intercepted.
+            location: The ``Location`` header to answer with.
+
+        Returns:
+            The mounted adapter, recording what was requested.
+        """
+        adapter = RedirectAdapter(location)
+        repo._client._session.mount("https://", adapter)
+        return adapter
+
+    def test_offsite_redirect_is_refused_on_the_default_download_path(self) -> None:
+        """The default path refuses an off-host redirect as unusable."""
+        repo = self.repository()
+        adapter = self.mount_redirect(repo, "https://evil.example.com/a.dat")
+        with self.assertRaises(WiserepUnusableSpectrumError):
+            repo.get_for_candidate(candidate())
+        self.assertEqual(adapter.urls, [candidate().ascii_url])
+
+    def test_port_changing_redirect_is_refused_on_the_default_download_path(
+        self,
+    ) -> None:
+        """The default path refuses a same-host port change as unusable."""
+        repo = self.repository()
+        adapter = self.mount_redirect(repo, f"https://{HOST}:8443/a.dat")
+        with self.assertRaises(WiserepUnusableSpectrumError):
+            repo.get_for_candidate(candidate())
+        self.assertEqual(adapter.urls, [candidate().ascii_url])
+
+    def test_offsite_url_is_refused_before_the_default_transport_is_used(
+        self,
+    ) -> None:
+        """An off-host URL is refused before the default session is reached."""
+        repo = self.repository()
+        adapter = self.mount_redirect(repo, f"https://{HOST}/a.dat")
+        with self.assertRaises(WiserepUnusableSpectrumError):
+            repo.get_for_candidate(
+                candidate(ascii_url="https://evil.example.com/a.dat")
+            )
+        self.assertEqual(adapter.urls, [])

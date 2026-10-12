@@ -4,9 +4,9 @@ The ASCII download URL this repository fetches arrives inside WISeREP's
 export, which is third-party content. An unchecked fetch would therefore let
 that content choose the request target of the server itself, so every URL --
 the one the export carried and the target of any redirect answering it -- is
-accepted only when its scheme is ``https`` and its host is the configured
-WISeREP host. A URL failing either check is refused as unusable rather than
-fetched, and no outbound request is made for it.
+accepted only when its scheme is ``https`` and its host and port are those of
+the configured WISeREP origin. A URL failing any of those checks is refused as
+unusable rather than fetched, and no outbound request is made for it.
 
 Parsing reuses the extension-dispatched readers in
 :mod:`astrodash.infrastructure.storage.file_spectrum_repository`, which keep
@@ -53,20 +53,25 @@ WINDOW_MAX_ANGSTROMS = 9000.0
 #: (R21). Below this the download is reported as unusable.
 MIN_WINDOW_POINTS = 100
 
-#: The most redirects one download may follow. Every target is host-checked,
-#: so this only bounds a chain that stays on the configured host.
+#: The most redirects one download may follow. Every target is origin-checked,
+#: so this only bounds a chain that stays on the configured host and port.
 MAX_REDIRECTS = 3
 
 #: The scheme a spectrum URL must use.
 _REQUIRED_SCHEME = "https"
 
+#: The port assumed when a URL names none, and the port a configured base URL
+#: naming none is taken to mean. Naming the allowed host on any other port
+#: reaches a different service, so the port is pinned alongside the host.
+DEFAULT_HTTPS_PORT = 443
+
 
 class WiserepUnusableSpectrumError(SpectrumValidationException):
     """Raised when a chosen spectrum cannot be classified as fetched.
 
-    Covers a download URL that is not on the configured WISeREP host over
-    ``https``, a redirect leading off it, a payload the readers cannot parse
-    as spectrum data, and a spectrum leaving fewer than
+    Covers a download URL that is not on the configured WISeREP host and port
+    over ``https``, a redirect leading off it, a payload the readers cannot
+    parse as spectrum data, and a spectrum leaving fewer than
     :data:`MIN_WINDOW_POINTS` points inside the usable window. It is
     deliberately distinct from WISeREP being unreachable.
 
@@ -86,12 +91,43 @@ def allowed_host(settings: Settings) -> str:
     return (urlsplit(settings.wiserep_base_url).hostname or "").lower()
 
 
-def require_allowed_url(url: str, host: str, what: str = "spectrum URL") -> str:
-    """Accept a URL only when it addresses the configured host over https.
+def allowed_port(settings: Settings) -> int:
+    """The one port a spectrum download may be read from.
+
+    Args:
+        settings: The application settings carrying ``wiserep_base_url``.
+
+    Returns:
+        The configured WISeREP port, or :data:`DEFAULT_HTTPS_PORT` when the
+        base URL names none.
+
+    Raises:
+        WiserepUnusableSpectrumError: When the configured base URL names a
+            port that cannot be read as one.
+    """
+    try:
+        port = urlsplit(settings.wiserep_base_url).port
+    except ValueError as exc:
+        raise WiserepUnusableSpectrumError(
+            f"configured WISeREP base URL {settings.wiserep_base_url!r} names "
+            f"an unreadable port"
+        ) from exc
+    return port or DEFAULT_HTTPS_PORT
+
+
+def require_allowed_url(
+    url: str,
+    host: str,
+    port: int = DEFAULT_HTTPS_PORT,
+    what: str = "spectrum URL",
+) -> str:
+    """Accept a URL only when it addresses the configured origin over https.
 
     Args:
         url: The URL to check.
         host: The one host accepted, lowercased.
+        port: The one port accepted. A URL naming no port is read as
+            :data:`DEFAULT_HTTPS_PORT`.
         what: A phrase naming what is being checked, used in the failure
             message.
 
@@ -100,8 +136,9 @@ def require_allowed_url(url: str, host: str, what: str = "spectrum URL") -> str:
 
     Raises:
         WiserepUnusableSpectrumError: When the scheme is not ``https``, when
-            the URL carries credentials, or when its host is anything other
-            than ``host``.
+            the URL carries credentials, when its host is anything other than
+            ``host``, or when its port is anything other than ``port``,
+            including a port that cannot be read as one.
     """
     parts = urlsplit(url)
     if parts.scheme.lower() != _REQUIRED_SCHEME:
@@ -117,47 +154,67 @@ def require_allowed_url(url: str, host: str, what: str = "spectrum URL") -> str:
         raise WiserepUnusableSpectrumError(
             f"{what} {url!r} is not on {host}; refusing to fetch it"
         )
+    try:
+        target_port = parts.port
+    except ValueError as exc:
+        raise WiserepUnusableSpectrumError(
+            f"{what} {url!r} names an unreadable port; refusing to fetch it"
+        ) from exc
+    if (target_port or DEFAULT_HTTPS_PORT) != port:
+        raise WiserepUnusableSpectrumError(
+            f"{what} {url!r} is not on port {port}; refusing to fetch it"
+        )
     return url
 
 
 def _refuse_offsite_redirect(
-    host: str, response: requests.Response, *args: Any, **kwargs: Any
+    host: str,
+    port: int,
+    response: requests.Response,
+    *args: Any,
+    **kwargs: Any,
 ) -> requests.Response:
-    """Refuse a redirect whose target leaves the configured host.
+    """Refuse a redirect whose target leaves the configured origin.
 
     Installed as a ``requests`` response hook, which runs before the redirect
-    is resolved, so an off-host target is never requested.
+    is resolved, so an off-origin target is never requested.
 
     Args:
         host: The one host accepted, lowercased.
+        port: The one port accepted.
         response: The response just received.
         *args: Positional hook arguments, ignored.
         **kwargs: Keyword hook arguments, ignored.
 
     Returns:
-        The response, unchanged, when it is not an off-host redirect.
+        The response, unchanged, when it is not an off-origin redirect.
 
     Raises:
         WiserepUnusableSpectrumError: When the response redirects to a target
-            that is not on ``host`` over ``https``.
+            that is not on ``host`` at ``port`` over ``https``.
     """
     location = response.headers.get("Location")
     if not location or not response.is_redirect:
         return response
-    require_allowed_url(urljoin(response.url, location), host, what="redirect target")
+    require_allowed_url(
+        urljoin(response.url, location), host, port, what="redirect target"
+    )
     return response
 
 
 def make_host_pinned_session(
-    host: str, max_redirects: int = MAX_REDIRECTS
+    host: str,
+    port: int = DEFAULT_HTTPS_PORT,
+    max_redirects: int = MAX_REDIRECTS,
 ) -> requests.Session:
-    """Build a session that will not be redirected off the configured host.
+    """Build a session that will not be redirected off the configured origin.
 
     Args:
         host: The one host accepted, lowercased.
+        port: The one port accepted.
         max_redirects: The most redirects one request may follow. Bounds a
-            chain that stays on ``host``; a chain leaving it is refused
-            outright.
+            chain that stays on ``host`` at ``port``; a chain leaving it is
+            refused outright.
 
     Returns:
         A session carrying the shared identity and retry adapter, with the
@@ -166,7 +223,7 @@ def make_host_pinned_session(
     """
     session = make_session()
     session.max_redirects = max_redirects
-    session.hooks["response"].append(partial(_refuse_offsite_redirect, host))
+    session.hooks["response"].append(partial(_refuse_offsite_redirect, host, port))
     return session
 
 
@@ -219,16 +276,17 @@ class WiserepSpectrumRepository(SpectrumRepository):
 
         Args:
             settings: The application settings carrying ``wiserep_base_url``,
-                which fixes the one host a download may be read from. Loaded
-                from the environment when omitted.
+                which fixes the one host and port a download may be read from.
+                Loaded from the environment when omitted.
             client: The bounded WISeREP transport to download through. One is
                 built over a host-pinned session when omitted.
         """
         self._settings = settings or get_settings()
         self._host = allowed_host(self._settings)
+        self._port = allowed_port(self._settings)
         self._client = client or WiserepClient(
             settings=self._settings,
-            session=make_host_pinned_session(self._host),
+            session=make_host_pinned_session(self._host, self._port),
         )
         self._reader = _TransientFileReader()
 
@@ -248,14 +306,14 @@ class WiserepSpectrumRepository(SpectrumRepository):
 
         Raises:
             WiserepUnusableSpectrumError: When the candidate's URL or a
-                redirect answering it is not on the configured host over
-                ``https``, when the payload cannot be read as spectrum data,
-                or when fewer than :data:`MIN_WINDOW_POINTS` points fall
+                redirect answering it is not on the configured host and port
+                over ``https``, when the payload cannot be read as spectrum
+                data, or when fewer than :data:`MIN_WINDOW_POINTS` points fall
                 inside the 4000-9000 Angstrom window.
             WiserepUnreachableError: When the download breached one of the
                 transport's bounds.
         """
-        url = require_allowed_url(candidate.ascii_url, self._host)
+        url = require_allowed_url(candidate.ascii_url, self._host, self._port)
         payload = self._client.download_spectrum(url)
 
         file_name = basename(urlsplit(url).path) or candidate.spectrum_id

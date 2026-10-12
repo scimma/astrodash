@@ -16,7 +16,10 @@ two stalled lookups are an outage. Every outbound request here is therefore
 bounded four ways -- a connect and read timeout per request, an absolute
 deadline across the whole pagination, a cap on the number of pages, and a cap
 on the bytes read from any one response -- and the spectrum download carries
-its own absolute deadline for the same reason.
+its own absolute deadline for the same reason. The retry waits ``urllib3``
+takes inside the adapter are clamped to that same deadline, because
+``Retry-After`` is uncapped upstream and the wait happens where none of the
+checks below can see it.
 
 A shared minimum interval between outbound requests is held in the Django
 cache so that concurrent workers throttle together, matching the one-second
@@ -33,6 +36,7 @@ from __future__ import annotations
 import logging
 import time
 import zipfile
+from contextvars import ContextVar
 
 import requests
 from django.core.cache import cache
@@ -111,11 +115,73 @@ class WiserepIncompleteExportError(ExternalServiceException):
         super().__init__("WISeREP", message)
 
 
+# Ceiling on any single wait the retry policy performs when no operation
+# deadline is in scope. ``urllib3`` does not cap ``Retry-After``, so a WISeREP
+# that answers 429 with an hour would otherwise park a worker for an hour
+# inside ``HTTPAdapter.send``, where none of this module's deadlines can see
+# it.
+MAX_RETRY_WAIT_SECONDS = 30.0
+
+# The absolute monotonic time the request in progress must finish by, set by
+# :meth:`WiserepClient._get_bounded` around each GET so that retry waits taken
+# inside the adapter are bounded by the same budget as the body read. A
+# context variable rather than an attribute of the retry policy, because
+# ``urllib3`` clones the policy on every attempt and the session is shared.
+_request_deadline: ContextVar[float | None] = ContextVar(
+    "wiserep_request_deadline", default=None
+)
+
+
+class _DeadlineAwareRetry(Retry):
+    """A retry policy whose waits cannot outlive the caller's deadline.
+
+    ``Retry.sleep`` runs inside ``HTTPAdapter.send``, before any of this
+    module's own deadline checks are reached, and ``urllib3`` honours an
+    uncapped ``Retry-After``. This policy clamps every wait to whatever budget
+    :data:`_request_deadline` has left and refuses to retry once that budget is
+    gone.
+    """
+
+    def sleep(self, response: object | None = None) -> None:
+        """Wait before the next attempt, clamped to the remaining budget.
+
+        Args:
+            response: The response that asked for the retry, when the retry was
+                triggered by a status rather than by a transport error.
+
+        Raises:
+            WiserepUnreachableError: When the operation's deadline has already
+                elapsed, so no further attempt can be made within it.
+        """
+        wait: float | None = None
+        if self.respect_retry_after_header and response is not None:
+            wait = self.get_retry_after(response)  # type: ignore[arg-type]
+        if wait is None:
+            wait = self.get_backoff_time()
+
+        deadline = _request_deadline.get()
+        if deadline is None:
+            if wait > 0:
+                time.sleep(min(wait, MAX_RETRY_WAIT_SECONDS))
+            return
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise WiserepUnreachableError(
+                "WISeREP asked for another attempt after the deadline for this "
+                "request had already elapsed"
+            )
+        if wait > 0:
+            time.sleep(min(wait, remaining, MAX_RETRY_WAIT_SECONDS))
+
+
 def make_session(user_agent: str = USER_AGENT) -> requests.Session:
     """Build a session that identifies itself and retries transient failures.
 
     Mirrors the adapter mount the offline scraper uses, with a shorter retry
-    budget because the request path runs under an absolute deadline.
+    budget because the request path runs under an absolute deadline, and with a
+    retry policy that clamps its waits to that deadline rather than to whatever
+    ``Retry-After`` asks for.
 
     Args:
         user_agent: The ``User-Agent`` to send. Defaults to the descriptive
@@ -133,7 +199,7 @@ def make_session(user_agent: str = USER_AGENT) -> requests.Session:
         }
     )
 
-    retries = Retry(
+    retries = _DeadlineAwareRetry(
         total=2,
         connect=2,
         read=2,
@@ -222,13 +288,16 @@ class WiserepClient:
         Raises:
             WiserepUnreachableError: When a request failed, returned an error
                 status, exceeded its timeout or the byte cap, or when the
-                pagination deadline elapsed with pages still outstanding.
+                pagination deadline elapsed with pages still outstanding. The
+                deadline covers the whole walk, not each page, so the total
+                time spent here cannot exceed
+                ``wiserep_total_deadline_seconds``.
             WiserepIncompleteExportError: When the page cap was reached while
                 rows were still outstanding, so the set would be partial.
         """
         deadline_seconds = self._settings.wiserep_total_deadline_seconds
         page_cap = self._settings.wiserep_page_cap
-        started = time.monotonic()
+        deadline = time.monotonic() + deadline_seconds
 
         rows: list[dict[str, str]] = []
         seen: set[str] = set()
@@ -240,15 +309,14 @@ class WiserepClient:
                     f"export for '{designation}' still had rows outstanding at "
                     f"the {page_cap}-page cap; refusing a partial set"
                 )
-            if page > 0:
-                elapsed = time.monotonic() - started
-                if elapsed >= deadline_seconds:
-                    raise WiserepUnreachableError(
-                        f"export for '{designation}' exceeded the "
-                        f"{deadline_seconds}-second deadline after {page} page(s)"
-                    )
+            remaining = deadline - time.monotonic()
+            if page > 0 and remaining <= 0:
+                raise WiserepUnreachableError(
+                    f"export for '{designation}' exceeded the "
+                    f"{deadline_seconds}-second deadline after {page} page(s)"
+                )
 
-            page_rows = self._fetch_page(designation, page)
+            page_rows = self._fetch_page(designation, page, remaining)
             spec_id_column = (
                 find_column(page_rows[0].keys(), SPEC_ID_ALIASES) if page_rows else None
             )
@@ -306,12 +374,16 @@ class WiserepClient:
             what=f"spectrum download from {url}",
         )
 
-    def _fetch_page(self, designation: str, page: int) -> list[dict[str, str]]:
+    def _fetch_page(
+        self, designation: str, page: int, deadline_seconds: float
+    ) -> list[dict[str, str]]:
         """Read and parse one page of the export.
 
         Args:
             designation: The designation being searched for.
             page: The zero-based page index.
+            deadline_seconds: What is left of the whole walk's budget, which is
+                all this page is allowed to take.
 
         Returns:
             The page's parsed rows.
@@ -330,7 +402,7 @@ class WiserepClient:
                 "num_page": str(EXPORT_PAGE_ROW_CAP),
                 "page": str(page),
             },
-            deadline_seconds=self._settings.wiserep_total_deadline_seconds,
+            deadline_seconds=deadline_seconds,
             what=f"export page {page} for '{designation}'",
         )
 
@@ -360,8 +432,10 @@ class WiserepClient:
         Args:
             url: The URL to read.
             params: Query parameters, or ``None`` for a bare URL.
-            deadline_seconds: The absolute wall of time the body is allowed to
-                take, measured from the moment the request is issued.
+            deadline_seconds: The budget this GET has to finish in, measured
+                from the moment the request is issued. It bounds the retry
+                waits taken inside the adapter as well as the body read, and
+                caps the per-request read timeout.
             what: A phrase naming the attempt, used in failure messages.
 
         Returns:
@@ -374,11 +448,12 @@ class WiserepClient:
         """
         self._respect_min_request_interval()
 
+        started = time.monotonic()
         timeout = (
             self._settings.wiserep_connect_timeout,
-            self._settings.wiserep_read_timeout,
+            min(self._settings.wiserep_read_timeout, max(deadline_seconds, 0.0)),
         )
-        started = time.monotonic()
+        token = _request_deadline.set(started + deadline_seconds)
 
         try:
             with self._session.get(
@@ -390,6 +465,8 @@ class WiserepClient:
                 )
         except requests.RequestException as exc:
             raise WiserepUnreachableError(f"{what} failed: {exc}") from exc
+        finally:
+            _request_deadline.reset(token)
 
     def _read_bounded_body(
         self,

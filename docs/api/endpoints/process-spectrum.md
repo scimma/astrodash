@@ -93,7 +93,63 @@ All of the following ids are **public** (listed, ungated). Send them as `params.
 
 ### Error Responses
 
+Every failure answers with the canonical error envelope -- a single `detail`
+string -- except `409`, which carries the matching objects as well. See
+[Error Model](../errors.md) for the full status-code table.
+
 **Status Code:** `400 Bad Request`
+
+An invalid file, or a `modelType` that is omitted (without a `model_id`),
+unknown, or retired.
+
+```json
+{
+  "detail": "Unknown model type: bogus."
+}
+```
+
+**Status Code:** `404 Not Found`
+
+The designation resolved against WISeREP, but nothing it holds is public, of
+the object itself, and classifiable, so no epoch was selected.
+
+```json
+{
+  "detail": "No public, classifiable spectrum is available for '2002er'."
+}
+```
+
+**Status Code:** `409 Conflict`
+
+The designation matches more than one WISeREP object. The request is refused
+rather than guessed, and the matching objects are returned under `objects` so a
+client can offer the choice without parsing designations back out of `detail`.
+Each entry carries `designation` as WISeREP spells it, `object_type` (empty
+when WISeREP records none), and `redshift` (`null` when WISeREP records none).
+The entries keep the order WISeREP's export listed them in.
+
+```json
+{
+  "detail": "Designation '2002e' matches more than one object (SN 2002ea, SN 2002eb). Choose which one to classify.",
+  "objects": [
+    {
+      "designation": "SN 2002ea",
+      "object_type": "SN Ia",
+      "redshift": 0.0279
+    },
+    {
+      "designation": "SN 2002eb",
+      "object_type": "",
+      "redshift": null
+    }
+  ]
+}
+```
+
+**Status Code:** `422 Unprocessable Entity`
+
+Neither a `file` nor an `objectName` was supplied, `params` was malformed, or
+the selected WISeREP spectrum cannot be classified as fetched.
 
 ```json
 {
@@ -103,9 +159,23 @@ All of the following ids are **public** (listed, ungated). Send them as `params.
 
 **Status Code:** `500 Internal Server Error`
 
+A processing failure, or WISeREP could not be read within its bounds.
+
 ```json
 {
   "detail": "Classification error: Model not found"
+}
+```
+
+**Status Code:** `502 Bad Gateway`
+
+WISeREP answered, but its spectrum listing for the designation could not be
+read to exhaustion, so no epoch was selected -- ranking a partial set could
+return a confident classification of the wrong spectrum.
+
+```json
+{
+  "detail": "The spectrum listing for '2002er' could not be read in full, so no epoch was selected."
 }
 ```
 
@@ -248,4 +318,41 @@ For `1dCNN_z`, `1dCNN_noz`, `latent_z`, and `latent_noz`, `best_matches[].type` 
 
   ```json
   { "detail": "Validation failed." }
+  ```
+
+- 422: neither a `file` nor an `objectName` supplied
+
+  ```json
+  { "detail": "No spectrum file or object designation provided" }
+  ```
+
+- 422: the selected WISeREP spectrum cannot be classified as fetched
+
+  ```json
+  { "detail": "spectrum 12345 for '2002er' leaves 42 point(s) inside 4000-9000 Angstroms, below the 100-point minimum" }
+  ```
+
+- 404: the designation holds no public, classifiable spectrum
+
+  ```json
+  { "detail": "No public, classifiable spectrum is available for '2002er'." }
+  ```
+
+- 409: the designation matches more than one object (see
+  [409 Conflict](#error-responses) for the `objects` list)
+
+  ```json
+  { "detail": "Designation '2002e' matches more than one object (SN 2002ea, SN 2002eb). Choose which one to classify." }
+  ```
+
+- 502: WISeREP's spectrum listing could not be read in full
+
+  ```json
+  { "detail": "The spectrum listing for '2002er' could not be read in full, so no epoch was selected." }
+  ```
+
+- 500: WISeREP could not be read within its bounds
+
+  ```json
+  { "detail": "WISeREP service error: export for '2002er' exceeded the 120-second deadline after 3 page(s)" }
   ```

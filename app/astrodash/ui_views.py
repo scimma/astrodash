@@ -642,6 +642,71 @@ def _source_redshift(spectrum):
     return redshift
 
 
+def _attributed_source_redshift(session):
+    """Return the redshift the last by-name classification took from the source.
+
+    The redshift field comes back filled in with whatever the previous lookup
+    put there, so a field still holding that value has not been edited -- it
+    belongs to the object or the epoch that was classified before, not to the
+    researcher. Both halves are read back out of what that classification
+    already wrote: the provenance entry says the value was the source's, and
+    ``classify_last_params`` holds the value itself. Nothing new is written to
+    the session here, and the same type check as ``_source_redshift`` applies on
+    the way back out, because a session is only as trustworthy as what encoded
+    into it.
+
+    Args:
+        session: The request's session.
+
+    Returns:
+        The redshift the previous classification attributed to the source, or
+        None when the previous classification was not by name, took its
+        redshift from the researcher, or recorded no usable number.
+    """
+    held = session.get("classify_spectrum_provenance")
+    if not isinstance(held, dict) or not held.get("redshift_from_source"):
+        return None
+    last_params = session.get("classify_last_params")
+    if not isinstance(last_params, dict):
+        return None
+    redshift = last_params.get("redshift")
+    if isinstance(redshift, bool) or not isinstance(redshift, (int, float)):
+        return None
+    return redshift
+
+
+def _offered_source_redshift(session):
+    """Return the redshift the source held at the last by-name classification.
+
+    Distinct from ``_attributed_source_redshift``, which reports what was
+    *used*: this reports what was *available*. It is the evidence that the page
+    the current submission came from had already shown the researcher a source
+    redshift -- so a redshift box that comes back empty, or a Known Redshift box
+    that comes back unchecked, is an opt-out rather than a first lookup that has
+    not been offered anything yet. It survives the opt-out itself, which is what
+    makes the opt-out stick instead of springing back on the next submit.
+
+    The same type check as ``_source_redshift`` applies on the way back out: the
+    value round-trips through a JSON-encoded session, and a session is only as
+    trustworthy as what encoded into it.
+
+    Args:
+        session: The request's session.
+
+    Returns:
+        The redshift the source recorded for the last by-name classification,
+        or None when the previous classification was not by name or the source
+        recorded no usable number.
+    """
+    held = session.get("classify_spectrum_provenance")
+    if not isinstance(held, dict):
+        return None
+    redshift = held.get("source_redshift")
+    if isinstance(redshift, bool) or not isinstance(redshift, (int, float)):
+        return None
+    return redshift
+
+
 def _source_spectrum_id(spectrum) -> str:
     """Return a spectrum's source identifier, but only when it is a real string.
 
@@ -1053,6 +1118,10 @@ def classify(request):
                 else None
             )
             redshift_from_source = False
+            # What the source held for this spectrum, used or not; recorded in
+            # the session so the next submission can tell an opt-out from a
+            # first lookup.
+            source_redshift = None
 
             previous_source_key = request.session.get('classify_input_source_key')
             source_changed = bool(
@@ -1083,11 +1152,47 @@ def classify(request):
                     # as submitted and no longer attributed to the source.
                     source_redshift = _source_redshift(spectrum)
                     submitted_redshift = form.cleaned_data.get("redshift")
+                    # What the field carries is only the researcher's when they
+                    # put it there. A new designation makes everything in the
+                    # form stale (the other settings were reset above for the
+                    # same reason), and a field still holding the value the last
+                    # lookup filled in is the previous object's or the previous
+                    # epoch's -- neither may stand in for this spectrum's.
+                    attributed_redshift = _attributed_source_redshift(request.session)
                     unedited = (
-                        submitted_redshift is None
+                        source_changed
+                        or submitted_redshift is None
                         or submitted_redshift == source_redshift
+                        or (
+                            attributed_redshift is not None
+                            and submitted_redshift == attributed_redshift
+                        )
                     )
-                    if source_redshift is not None and unedited:
+                    # Auto-filled, labelled, overridable -- and clearing the
+                    # field or unchecking Known Redshift is one of the ways to
+                    # override it (R10). The label has already disclosed where
+                    # the value came from, so a researcher who removes it is
+                    # making an informed choice and it is not written back over
+                    # them. The opt-out is only legible against a page that had
+                    # already been offered the source's value: a first lookup
+                    # submits the same empty box and unchecked box, and must
+                    # still be filled in (R9). A new designation resets the form
+                    # (above), so nothing is read back across one.
+                    opted_out = (
+                        not source_changed
+                        and _offered_source_redshift(request.session) is not None
+                        and form.redshift_controls_submitted
+                        and (form.redshift_cleared or form.known_redshift_unchecked)
+                    )
+                    if opted_out:
+                        params["zValue"] = None
+                        params["knownZ"] = False
+                        logger.info(
+                            "Classifying %s without a redshift: the source's "
+                            "value was declined on this submission",
+                            supernova_name,
+                        )
+                    elif source_redshift is not None and unedited:
                         params["zValue"] = source_redshift
                         params["knownZ"] = True
                         redshift_from_source = True
@@ -1097,6 +1202,16 @@ def classify(request):
                     # zero for a redshift the source does not record (R11).
                     if form.redshift_required_deferred and params["zValue"] is None:
                         form.add_error("redshift", REDSHIFT_REQUIRED_MESSAGE)
+                        # The report region is where focus lands after a by-name
+                        # submit and what the live region announces, so the
+                        # refusal is reported there as well as on the field it
+                        # is about. Without it focus arrives on an empty region
+                        # and the only message sits in the sidebar form, out of
+                        # the way of anyone who cannot see the whole page.
+                        context["lookup_refusal"] = {
+                            "kind": "redshift_required",
+                            "message": REDSHIFT_REQUIRED_MESSAGE,
+                        }
                         context["by_name_submitted"] = True
                         return render(request, "astrodash/classify.html", context)
 
@@ -1188,6 +1303,11 @@ def classify(request):
                     request.session["classify_spectrum_provenance"] = {
                         "provenance": provenance,
                         "redshift_from_source": redshift_from_source,
+                        "source_redshift": (
+                            float(source_redshift)
+                            if source_redshift is not None
+                            else None
+                        ),
                         "preserved_fields": preserved_fields,
                     }
                 else:

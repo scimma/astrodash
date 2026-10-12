@@ -226,6 +226,17 @@ class ClassifyForm(forms.Form):
         # Whether the required-redshift gate was left for the view to apply
         # after resolution; set in clean().
         self.redshift_required_deferred = False
+
+        # Whether this submission carried the redshift controls at all. Read
+        # from the raw submission rather than a cleaned value, because what is
+        # being distinguished is a field that came back empty from a page that
+        # showed it (a value the researcher removed) from a field that was
+        # never submitted (no statement about the redshift either way). The
+        # two clean to the same ``None``.
+        self.redshift_controls_submitted = self.is_bound and "redshift" in self.data
+        # Set in clean(), and only meaningful when the controls were submitted.
+        self.redshift_cleared = False
+        self.known_redshift_unchecked = False
         self.object_name = object_name
         self.epoch_records = candidate_records_for_name(object_name)
         epoch_choices = [
@@ -255,6 +266,15 @@ class ClassifyForm(forms.Form):
 
         if not file and not supernova_name:
             raise forms.ValidationError("Please provide either a spectrum file or a Supernova Name.")
+
+        # An empty redshift box that was on the page is a value the researcher
+        # removed; a box that was never submitted says nothing. A checkbox is
+        # only present when it is checked, so its absence reads as "unchecked"
+        # only when the submission carried the controls at all. Zero is a real
+        # redshift, so neither reads off the value's truthiness.
+        if self.redshift_controls_submitted:
+            self.redshift_cleared = redshift is None
+            self.known_redshift_unchecked = not known_z
 
         if known_z and redshift is None:
             self.add_error('redshift', "Redshift is required when 'Known Redshift' is checked.")

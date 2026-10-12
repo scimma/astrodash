@@ -85,6 +85,19 @@ class SpectrumRepository(ABC):
         """
         pass
 
+
+class RetainedSpectrumStore(ABC):
+    """A store that can serve a spectrum it already retained.
+
+    Deliberately separate from :class:`SpectrumRepository`: only a store that
+    actually retains spectra can answer the retention lookup, and a default
+    returning ``None`` on the wider interface would let a repository that
+    retains nothing -- the file reader, the WISeREP reader -- answer "not
+    retained" for every epoch and so re-download on every lookup. Mixed into
+    the repository that does retain, it makes the others fail loudly instead.
+    """
+
+    @abstractmethod
     def get_by_designation_and_spectrum_id(
         self, object_designation: str, source_spectrum_id: str
     ) -> Optional[Spectrum]:
@@ -92,8 +105,7 @@ class SpectrumRepository(ABC):
 
         One object may have several retained epochs, so a retained spectrum is
         identified upstream by its object designation together with the
-        source's own identifier for that spectrum. Implementations that retain
-        nothing leave this returning ``None``.
+        source's own identifier for that spectrum.
 
         Args:
             object_designation: The designation of the object the spectrum
@@ -103,4 +115,4 @@ class SpectrumRepository(ABC):
         Returns:
             The Spectrum if one is retained for that pair, None otherwise.
         """
-        return None
+        pass

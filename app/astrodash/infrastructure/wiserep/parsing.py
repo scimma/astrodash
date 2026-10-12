@@ -94,6 +94,8 @@ def find_column(
         preferred: Known spellings, tried in order; the first that matches a
             header under :func:`normalize_col` wins.
         contains: Fallback tokens; a header containing all of them matches.
+            Empty -- the default -- means there is no fallback, so a header
+            that no ``preferred`` alias names does not match at all.
 
     Returns:
         The matching header name as it appears in the export, or ``None`` when
@@ -107,7 +109,14 @@ def find_column(
         if key in normalized:
             return normalized[key]
 
-    contains_norm = [normalize_col(x) for x in contains]
+    # A fallback given no tokens must match nothing. Without this guard the
+    # loop below asks ``all()`` over an empty sequence, which is vacuously
+    # true, and so returns whichever column happens to come first -- for a
+    # spectra export, the object's IAU name standing in for its spectrum id.
+    contains_norm = [token for token in (normalize_col(x) for x in contains) if token]
+    if not contains_norm:
+        return None
+
     for f in fields:
         nf = normalize_col(f)
         if all(token in nf for token in contains_norm):

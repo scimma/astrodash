@@ -222,6 +222,25 @@ class Settings(BaseSettings):
     wiserep_min_request_interval_seconds: float = 1.0
     wiserep_download_deadline_seconds: float = 60.0
 
+    # WISeREP resolution reuse
+    # A stored candidate set is served without asking WISeREP again until it
+    # ages past wiserep_candidate_set_ttl_seconds, after which the next lookup
+    # of that designation re-resolves it so an epoch WISeREP published later is
+    # offered. That narrows R13 from "a repeat lookup makes no outbound
+    # request" to "a repeat lookup makes no outbound download": the
+    # re-resolution is one search, and the already retained spectrum still
+    # comes from local storage.
+    # A refusal is cached for wiserep_refusal_cache_ttl_seconds so a designation
+    # that refuses does not re-paginate the export on every submission; it is
+    # kept short because the conditions behind a refusal (an embargo lifting, a
+    # partial export completing) can change at any time.
+    # wiserep_resolution_wait_seconds bounds how long a second caller for the
+    # same designation waits on the first caller's resolution before resolving
+    # it itself.
+    wiserep_candidate_set_ttl_seconds: float = 86400.0
+    wiserep_refusal_cache_ttl_seconds: float = 120.0
+    wiserep_resolution_wait_seconds: float = 150.0
+
     # Logging
     log_dir: str = Field("logs")
     log_level: str = Field("INFO")

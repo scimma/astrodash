@@ -753,29 +753,85 @@
 <script>
 (function() {
     // A by-name lookup reads WISeREP and takes seconds, and the page does not
-    // change while it does. The submit is disabled so an impatient second
-    // click cannot occupy the other worker, and the status names the
-    // designation being looked up, announced politely.
+    // change while it does. There are several ways to start one -- the sidebar
+    // form, a match from an ambiguous list, an epoch switch -- and only two
+    // gunicorn workers serve them, so the guard is one page-wide in-flight
+    // flag that cancels any further submit rather than a disabled attribute on
+    // the form that happened to be submitted. The buttons are marked
+    // aria-disabled, not disabled, so a dimmed control keeps its keyboard
+    // focus, and the status line is shown as well as announced so the pending
+    // state is never carried by styling alone.
+    // Longer than the 120s multi-page resolution deadline the client
+    // enforces, so the watchdog cannot lift the guard while a legitimate
+    // lookup is still in flight; short enough that an aborted navigation
+    // does not leave the page unusable.
+    var RESET_AFTER_MS = 150000;
+    var inFlight = false;
+    var resetTimer = null;
     function designationIn(form) {
         var field = form.querySelector('[name="supernova_name"]');
         return field && field.value ? field.value.trim() : "";
     }
+    function submitButtons() {
+        return document.querySelectorAll('form.by-name-aware button[type="submit"]');
+    }
     document.addEventListener("DOMContentLoaded", function() {
         var status = document.getElementById("lookup-status");
-        var forms = document.querySelectorAll("form.by-name-aware");
-        Array.prototype.forEach.call(forms, function(form) {
-            form.addEventListener("submit", function() {
-                var designation = designationIn(form);
-                if (!designation) return;
-                var submits = form.querySelectorAll('button[type="submit"]');
-                Array.prototype.forEach.call(submits, function(button) {
-                    button.disabled = true;
-                });
-                if (status) {
-                    status.textContent = "Looking up " + designation +
-                        " in WISeREP. This takes a few seconds.";
+        function markPending(pending, message) {
+            Array.prototype.forEach.call(submitButtons(), function(button) {
+                if (pending) {
+                    button.setAttribute("aria-disabled", "true");
+                    button.classList.add("disabled");
+                } else {
+                    button.removeAttribute("aria-disabled");
+                    button.classList.remove("disabled");
                 }
             });
+            if (status) {
+                status.textContent = pending ? message : "";
+                status.classList.toggle("sr-only", !pending);
+            }
+        }
+        function release() {
+            if (resetTimer !== null) {
+                window.clearTimeout(resetTimer);
+                resetTimer = null;
+            }
+            inFlight = false;
+            markPending(false, "");
+        }
+        var forms = document.querySelectorAll("form.by-name-aware");
+        Array.prototype.forEach.call(forms, function(form) {
+            form.addEventListener("submit", function(event) {
+                if (inFlight) {
+                    // Another submit from this page is already waiting on a
+                    // worker; a second one would take the only other worker.
+                    event.preventDefault();
+                    return;
+                }
+                inFlight = true;
+                var designation = designationIn(form);
+                markPending(true, designation
+                    ? "Looking up " + designation +
+                      " in WISeREP. This takes a few seconds."
+                    : "Classifying. This takes a few seconds.");
+                // Nothing fires when a navigation is cancelled or aborted, so
+                // the guard also lifts itself well after the slowest observed
+                // lookup. A navigation that does commit fires pagehide first
+                // and clears the timer.
+                resetTimer = window.setTimeout(release, RESET_AFTER_MS);
+            });
+        });
+        window.addEventListener("pagehide", function() {
+            if (resetTimer !== null) {
+                window.clearTimeout(resetTimer);
+                resetTimer = null;
+            }
+        });
+        window.addEventListener("pageshow", function(event) {
+            // A back/forward restore hands back the document as it was left,
+            // mid-submit markings and all, so the guard is lifted explicitly.
+            if (event.persisted || inFlight) release();
         });
         {% if by_name_submitted %}
         var report = document.getElementById("lookup-report");

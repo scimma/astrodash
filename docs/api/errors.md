@@ -64,9 +64,12 @@ FastAPI validation errors (schema-level) may return a list under `detail`:
     { "detail": "Designation '2002e' matches more than one object (SN 2002ea, SN 2002eb). Choose which one to classify." }
     ```
 
-    An ambiguous designation is refused rather than guessed. The exception
-    carries the matching designations so a caller can offer the choice; the
-    message lists them in parentheses.
+    An ambiguous designation is refused rather than guessed. The message
+    lists the matching designations in parentheses, and the response body
+    also carries them in a machine-readable `objects` array (each entry has
+    `designation`, `object_type` and `redshift`), so a caller can offer the
+    choice without parsing the message. See the process-spectrum endpoint
+    reference for the full shape.
 
 - 422 Unprocessable Entity
 

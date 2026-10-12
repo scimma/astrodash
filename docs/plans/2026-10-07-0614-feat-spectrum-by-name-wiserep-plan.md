@@ -105,7 +105,7 @@ flowchart TB
 - AE2. **Covers R3, R4.** Given the designations `2026puh`, `SN2026puh`, `AT2026puh`, `SN 2026puh`, `ATLAS26hqe`, and `GOTO26gey`, when each is submitted, then all six resolve to the same object.
 - AE3. **Covers R9, R10.** Given a name whose WISeREP record carries a redshift, when the spectrum is selected, then the redshift input holds that value, is labelled as coming from WISeREP, and can be overwritten by A1.
 - AE4. **Covers R11.** Given a name whose WISeREP record carries no redshift and a model that requires one, when A1 submits the name, then the redshift input is empty, the known-redshift flag is unset, and the existing requirement check refuses the classification rather than proceeding at redshift zero.
-- AE5. **Covers R13.** Given a spectrum A2 already holds, when A1 submits its designation a second time, then no request reaches A3 and the result reports when the held copy was retrieved.
+- AE5. **Covers R13.** Given a spectrum A2 already holds and a candidate set resolved within its lifetime, when A1 submits its designation a second time, then no request reaches A3 and the result reports when the held copy was retrieved. Once that set ages past its lifetime the repeat lookup makes one search request to A3 and still serves the held copy without downloading it.
 - AE6. **Covers R5.** Given a name whose only spectra are within their proprietary period, when A1 submits it, then no spectrum is classified and the outcome is reported as no public spectrum rather than as a resolution failure.
 - AE7. **Covers R17, R18.** Given WISeREP is unreachable, when A1 submits any name, then the outcome is reported as the source being unavailable, distinctly from a name that resolved to nothing, and the REST path answers with its JSON error envelope rather than an HTML error page.
 - AE8. **Covers R8.** Given a classification produced from one of the 35 eligible spectra for `2002er`, when A1 selects a different epoch, then that spectrum is classified instead and A1 does not re-enter the designation.
@@ -147,7 +147,7 @@ flowchart TB
 **Provenance and reuse**
 
 - R12. A fetched spectrum is retained with the WISeREP identifiers that locate it upstream and the time it was retrieved.
-- R13. A request for a spectrum already retained is served from storage without an outbound request.
+- R13. A request for a spectrum already retained is served from storage without an outbound download. (session-settled: narrowed from "without an outbound request" during implementation. A resolved candidate set is re-resolved once it ages past `wiserep_candidate_set_ttl_seconds`, 24 hours by default, so epochs WISeREP publishes later are offered rather than hidden behind a set kept forever. A repeat lookup therefore makes at most one search request and never re-downloads the retained spectrum. When WISeREP is unreachable at that moment the aged set is served anyway, so an outage costs freshness rather than availability.)
 - R14. The result credits WISeREP as the source of a fetched spectrum, following the attribution already present at `app/astrodash/templates/astrodash/leaderboard.html:127` and `:265`.
 
 **Retiring the superseded path**
@@ -170,7 +170,7 @@ flowchart TB
 ### Success Criteria
 
 - A classification produced by name can be reproduced later from what was retained, without returning to WISeREP.
-- No outbound request is made for a spectrum already retained.
+- No outbound download is made for a spectrum already retained; a repeat lookup makes at most one search request, to notice epochs published since, and falls back to the aged candidate set when WISeREP is unreachable.
 - `STRATEGY.md` carries a by-name completion-rate metric alongside the existing single-spectrum completion rate, whose definition and collected series are left unchanged. Tracking both is what shows whether starting from a designation converts better than starting from a file.
 - A first fetch reaches a result within 30 seconds for an object whose search fits one export page, and within 120 seconds for one needing several, matching the total search deadline. A repeat lookup of a retained spectrum is faster than either, since it makes no outbound request.
 

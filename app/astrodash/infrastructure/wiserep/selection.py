@@ -69,7 +69,7 @@ class RefusalReason(Enum):
     AMBIGUOUS_NAME = "ambiguous_name"
 
     #: Nothing the submitted name matched survived eligibility (R5, R20) or
-    #: carried a usable observation date.
+    #: carried a usable spectrum identifier and observation date.
     NO_ELIGIBLE_SPECTRUM = "no_eligible_spectrum"
 
 
@@ -285,11 +285,17 @@ def _is_eligible(columns: _Columns, row: Mapping[str, str]) -> bool:
 
     Returns:
         ``True`` when WISeREP marks the row public (R5), its spectrum type is
-        ``Object`` (R20), and it carries a readable Julian date to rank by.
+        ``Object`` (R20), it carries a spectrum identifier, and it carries a
+        readable Julian date to rank by.
     """
     if columns.value(row, columns.public).lower() != _PUBLIC_VALUE:
         return False
     if columns.value(row, columns.spectrum_type).lower() != _OBJECT_SPEC_TYPE:
+        return False
+    # Retention downstream is keyed by designation plus source spectrum id, so
+    # a row without an identifier cannot be retained or re-offered coherently
+    # even though it is otherwise classifiable.
+    if not columns.value(row, columns.spectrum_id):
         return False
     return _parse_float(columns.value(row, columns.julian_date)) is not None
 

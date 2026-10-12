@@ -565,3 +565,165 @@ class WiserepMultiObjectExportTests(SimpleTestCase):
 
         self.assertEqual(len(rows), 51)
         self.assertGreater(len({row["IAU name"] for row in rows}), 1)
+
+
+class WiserepRetryWaitTests(SimpleTestCase):
+    """The waits the retry adapter takes inside ``HTTPAdapter.send``."""
+
+    def setUp(self) -> None:
+        """Take the retry policy the session actually mounts."""
+        self.retries = make_session().get_adapter("https://").max_retries
+
+    def retry_response(self, retry_after: str) -> mock.Mock:
+        """Build a stand-in response carrying a ``Retry-After`` header.
+
+        Args:
+            retry_after: The header value WISeREP would have sent.
+
+        Returns:
+            An object exposing the header the way ``urllib3`` reads it.
+        """
+        return mock.Mock(headers={"Retry-After": retry_after})
+
+    def set_deadline(self, deadline: float) -> None:
+        """Put an absolute deadline in scope for the duration of a case.
+
+        Args:
+            deadline: The monotonic time the request must finish by.
+        """
+        token = client_module._request_deadline.set(deadline)
+        self.addCleanup(client_module._request_deadline.reset, token)
+
+    def test_the_mounted_policy_is_deadline_aware_and_stays_so_when_cloned(
+        self,
+    ) -> None:
+        self.assertIsInstance(self.retries, client_module._DeadlineAwareRetry)
+        self.assertIsInstance(self.retries.new(), client_module._DeadlineAwareRetry)
+
+    def test_a_long_retry_after_is_clamped_to_the_remaining_budget(self) -> None:
+        clock = FakeClock()
+        self.set_deadline(12.0)
+
+        with mock.patch.object(client_module, "time", clock):
+            self.retries.sleep(self.retry_response("3600"))
+
+        self.assertEqual(clock.sleeps, [12.0])
+
+    def test_a_long_retry_after_is_clamped_even_with_no_budget_in_scope(self) -> None:
+        clock = FakeClock()
+
+        with mock.patch.object(client_module, "time", clock):
+            self.retries.sleep(self.retry_response("3600"))
+
+        self.assertEqual(clock.sleeps, [client_module.MAX_RETRY_WAIT_SECONDS])
+
+    def test_a_retry_asked_for_past_the_deadline_is_refused(self) -> None:
+        clock = FakeClock()
+        self.set_deadline(-1.0)
+
+        with mock.patch.object(client_module, "time", clock):
+            with self.assertRaises(WiserepUnreachableError):
+                self.retries.sleep(self.retry_response("3600"))
+
+        self.assertEqual(clock.sleeps, [])
+
+
+class WiserepWholeOperationBudgetTests(SimpleTestCase):
+    """One budget for the whole walk, not one per page."""
+
+    def test_each_page_gets_only_what_is_left_of_the_budget(self) -> None:
+        clock = FakeClock(step=20.0)
+        session = FakeSession(
+            [
+                FakeResponse(read_fixture("2023ixf_page0.zip")),
+                FakeResponse(read_fixture("2023ixf_page1.zip")),
+                FakeResponse(read_fixture("2026puh_page0.zip")),
+            ]
+        )
+        client = WiserepClient(
+            settings=build_settings(wiserep_total_deadline_seconds=400.0),
+            session=session,
+        )
+        budgets: list[float] = []
+        bounded = client._get_bounded
+
+        def record(url, params, deadline_seconds, what):
+            budgets.append(deadline_seconds)
+            return bounded(
+                url, params=params, deadline_seconds=deadline_seconds, what=what
+            )
+
+        with mock.patch.object(client, "_get_bounded", record):
+            with mock.patch.object(client_module, "time", clock):
+                client.search_spectra_rows("2023ixf")
+
+        self.assertEqual(len(budgets), 3)
+        self.assertLessEqual(budgets[0], 400.0)
+        self.assertLess(budgets[1], budgets[0])
+        self.assertLess(budgets[2], budgets[1])
+
+    def test_a_request_timeout_is_capped_by_what_is_left_of_the_budget(self) -> None:
+        session = FakeSession([FakeResponse(b"3500.0 1.0\n")])
+        client = WiserepClient(
+            settings=build_settings(
+                wiserep_read_timeout=30.0, wiserep_download_deadline_seconds=4.0
+            ),
+            session=session,
+        )
+
+        with mock.patch.object(client_module, "time", FakeClock()):
+            client.download_spectrum("https://www.wiserep.org/a.ascii")
+
+        self.assertEqual(session.calls[0]["timeout"], (5.0, 4.0))
+
+
+class WiserepUnreadableExportTests(SimpleTestCase):
+    """Payloads that arrive with a good status and are not an export."""
+
+    def client_over(self, payload: bytes) -> WiserepClient:
+        """Build a client whose single response carries a payload.
+
+        Args:
+            payload: The bytes the stubbed response streams.
+
+        Returns:
+            A client wired to a session queued with that one response.
+        """
+        return WiserepClient(
+            settings=build_settings(), session=FakeSession([FakeResponse(payload)])
+        )
+
+    def test_an_html_error_page_served_as_success_is_unreachable(self) -> None:
+        client = self.client_over(
+            b"<html><body>WISeREP is undergoing maintenance</body></html>"
+        )
+
+        with mock.patch.object(client_module, "time", FakeClock()):
+            with self.assertRaises(WiserepUnreachableError):
+                client.search_spectra_rows("2002er")
+
+    def test_a_zip_without_a_delimited_member_is_unreachable(self) -> None:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("readme.txt", "no table here\n")
+        client = self.client_over(buffer.getvalue())
+
+        with mock.patch.object(client_module, "time", FakeClock()):
+            with self.assertRaises(WiserepUnreachableError):
+                client.search_spectra_rows("2002er")
+
+    def test_an_export_missing_downstream_columns_is_not_a_transport_failure(
+        self,
+    ) -> None:
+        payload = zip_export(
+            "IAU name\tObj. Type\tRedshift",
+            ["SN 2002er\tSN Ia\t0.0086", "SN 2023ixf\tSN II\t0.000804"],
+        )
+        client = self.client_over(payload)
+
+        with mock.patch.object(client_module, "time", FakeClock()):
+            rows = client.search_spectra_rows("2002er")
+
+        self.assertEqual(len(rows), 2)
+        self.assertNotIn("Spec. ID", rows[0])
+        self.assertNotIn("Ascii file", rows[0])

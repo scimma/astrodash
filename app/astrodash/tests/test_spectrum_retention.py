@@ -6,12 +6,15 @@ from datetime import timedelta
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
+from unittest import mock
+
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.utils import timezone
 
 from astrodash.domain.models.spectrum import Spectrum
+from astrodash.infrastructure import django_repositories
 from astrodash.infrastructure.django_repositories import (
     DjangoCandidateSetRepository,
     DjangoSpectrumRepository,
@@ -146,6 +149,70 @@ class SpectrumRetentionTests(TestCase):
         self.assertIsNone(self.repo.get_by_osc_ref(""))
 
 
+class ConcurrentFirstFetchTests(TransactionTestCase):
+    """Two first fetches of one epoch do not collide on the unique key.
+
+    ``save`` reads before it writes, so two workers fetching one epoch for the
+    first time can both find no row, both mint a primary key and both insert.
+    Migration 0003 makes (object_designation, source_spectrum_id) unique, so
+    the loser's insert raises ``IntegrityError``; unhandled, it reached the
+    researcher as "this spectrum is unusable".
+
+    The race is driven by blinding the pre-write read rather than by running
+    real threads: that is the one interleaving that matters, and reproducing it
+    with threads would turn a deterministic case into a timing-dependent one.
+    """
+
+    def test_the_loser_updates_the_winner_row_instead_of_failing(self):
+        repo = DjangoSpectrumRepository()
+        winner = repo.save(_spectrum(source_spectrum_id="12345"))
+
+        real_latest_for = django_repositories._latest_for
+        reads = []
+
+        def blind_first_read(object_designation, source_spectrum_id):
+            """Answer the first read as if the winner's row did not exist yet.
+
+            Args:
+                object_designation: Designation of the object.
+                source_spectrum_id: The source's identifier for the spectrum.
+
+            Returns:
+                None on the first call, the real row afterwards.
+            """
+            reads.append(object_designation)
+            if len(reads) == 1:
+                return None
+            return real_latest_for(object_designation, source_spectrum_id)
+
+        with mock.patch.object(django_repositories, "_latest_for", blind_first_read):
+            loser = repo.save(
+                _spectrum(source_spectrum_id="12345", redshift=0.0092, y=[0.2] * 4)
+            )
+
+        self.assertEqual(loser.id, winner.id, "a second row was minted")
+        self.assertEqual(
+            SpectrumRecord.objects.filter(
+                object_designation="SN2002er", source_spectrum_id="12345"
+            ).count(),
+            1,
+        )
+        found = repo.get_by_designation_and_spectrum_id("SN2002er", "12345")
+        self.assertEqual(found.redshift, 0.0092)
+        self.assertEqual(found.y, [0.2] * 4)
+
+    def test_an_unkeyed_spectrum_still_saves(self):
+        """An upload carries neither identifier and takes the plain path."""
+        repo = DjangoSpectrumRepository()
+        saved = repo.save(
+            _spectrum(
+                object_designation=None, source_spectrum_id=None, source_name=None
+            )
+        )
+
+        self.assertIsNotNone(repo.get_by_id(saved.id))
+
+
 class CandidateSetRetentionTests(TestCase):
     """A resolved candidate set is stored durably under its submitted name."""
 
@@ -234,10 +301,13 @@ class SpectrumSourceIdentityMigrationTests(TransactionTestCase):
     migrate_from = [("astrodash", "0002_load_fixtures")]
     migrate_to = [("astrodash", "0003_spectrum_source_identity")]
     legacy_id = "legacy-osc-row"
+    undesignated_id = "legacy-upload-row"
 
     def tearDown(self):
         self._migrate(self.migrate_to)
-        SpectrumRecord.objects.filter(id=self.legacy_id).delete()
+        SpectrumRecord.objects.filter(
+            id__in=[self.legacy_id, self.undesignated_id]
+        ).delete()
 
     @staticmethod
     def _migrate(targets):
@@ -305,6 +375,31 @@ class SpectrumSourceIdentityMigrationTests(TransactionTestCase):
             DjangoSpectrumRepository().get_by_designation_and_spectrum_id(
                 "osc-sn2002er-0", "12345"
             )
+        )
+
+    def test_rows_without_a_designation_are_left_unmarked(self):
+        self._migrate(self.migrate_from)
+        old_record = self._historical_model(self.migrate_from, "SpectrumRecord")
+        old_record.objects.create(
+            id=self.undesignated_id,
+            osc_ref=None,
+            file_name="uploaded.dat",
+            x=list(WAVELENGTHS),
+            y=list(FLUXES),
+            redshift=0.01,
+            meta={"source": "upload"},
+        )
+
+        self._migrate(self.migrate_to)
+
+        record = SpectrumRecord.objects.get(id=self.undesignated_id)
+        self.assertIsNone(record.object_designation)
+        self.assertIsNone(record.source_name)
+        self.assertEqual(
+            SpectrumRecord.objects.filter(
+                object_designation__isnull=True, source_name__isnull=False
+            ).count(),
+            0,
         )
 
     def test_migration_is_reversible(self):

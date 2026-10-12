@@ -19,6 +19,11 @@ Four things are locked here:
 * the retired name is not silently accepted -- a request carrying only
   ``oscRef`` is refused as a missing parameter by the real service.
 
+Three further tests cover what the by-name path answers with on failure: the
+``409`` ambiguous-designation body carries the matching objects as a list
+rather than only inside the message, and ``docs/api/openapi.json`` documents
+every status ``POST /process`` can return along with that ``409`` body shape.
+
 A guard scan then proves no file under ``docs/api/`` or ``docs/guides/``
 mentions the retired name or the ``osc-`` prefixed identifier format its error
 guidance described. ``docs/plans/`` and ``docs/brainstorms/`` are excluded:
@@ -46,6 +51,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from django.test import Client, SimpleTestCase
 from django.urls import reverse
 
+from astrodash.core.exceptions import AmbiguousDesignationException
 from astrodash.infrastructure.wiserep.client import WiserepUnreachableError
 
 #: The source-neutral request parameter that carries an object designation.
@@ -63,6 +69,16 @@ GUARDED_DOC_DIRS = ("docs/api", "docs/guides")
 
 #: The schema file whose parameter name must match the one the view reads.
 OPENAPI_RELPATH = "docs/api/openapi.json"
+
+#: The keys every entry in the 409 response's ``objects`` list carries. A bare
+#: designation asks someone to pick between things they cannot tell apart, so
+#: the type and redshift travel with it.
+AMBIGUOUS_OBJECT_KEYS = {"designation", "object_type", "redshift"}
+
+#: The statuses POST /process can answer with, each of which the schema file
+#: must document. The by-name path contributes 404, 409, 422 and 502; three
+#: distinct failure-class families deliberately carry distinct statuses.
+PROCESS_STATUSES = ("200", "400", "403", "404", "409", "422", "500", "502")
 
 
 def _find_repo_root() -> Optional[Path]:
@@ -214,6 +230,72 @@ class ObjectParameterContractTests(SimpleTestCase):
         self.assertEqual(resp.status_code, 500)
         self.assertEqual(resp["Content-Type"], "application/json")
         self.assertIn("WISeREP", resp.json()["detail"])
+
+    def test_ambiguous_designation_returns_the_matching_objects(self) -> None:
+        """The 409 body carries a machine-readable list of the matches.
+
+        ``AmbiguousDesignationException`` holds the matching objects, and the
+        documented contract promises them in the response, so a client can
+        offer the choice without parsing designations back out of ``detail``.
+        """
+        matches = (
+            {"designation": "SN 2002ea", "object_type": "SN Ia", "redshift": 0.0279},
+            {"designation": "SN 2002eb", "object_type": "", "redshift": None},
+        )
+        failing = MagicMock(
+            get_spectrum_data=AsyncMock(
+                side_effect=AmbiguousDesignationException("2002e", matches)
+            ),
+            save_spectrum=AsyncMock(return_value=None),
+        )
+        params = json.dumps({"modelType": "dash", OBJECT_PARAM: "2002e"})
+        resp, _ = self._post({"params": params}, spectrum_svc=failing)
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp["Content-Type"], "application/json")
+        body = resp.json()
+        self.assertIn("matches more than one object", body["detail"])
+        self.assertEqual(len(body["objects"]), 2)
+        for entry in body["objects"]:
+            self.assertEqual(set(entry), AMBIGUOUS_OBJECT_KEYS)
+        self.assertEqual(
+            [entry["designation"] for entry in body["objects"]],
+            ["SN 2002ea", "SN 2002eb"],
+        )
+        self.assertEqual(body["objects"][0]["object_type"], "SN Ia")
+        self.assertEqual(body["objects"][0]["redshift"], 0.0279)
+        self.assertEqual(body["objects"][1]["object_type"], "")
+        self.assertIsNone(body["objects"][1]["redshift"])
+
+    @unittest.skipIf(REPO_ROOT is None, DOCS_SKIP_REASON)
+    def test_schema_file_documents_every_process_status(self) -> None:
+        """The schema file documents each status POST /process can answer with.
+
+        The five by-name failure conditions carry five distinct statuses by
+        design; a schema that documents only some of them tells a client to
+        treat the rest as unexpected.
+        """
+        schema_path = REPO_ROOT / OPENAPI_RELPATH
+        documented = json.loads(schema_path.read_text(encoding="utf-8"))["paths"][
+            "/process"
+        ]["post"]["responses"]
+        for status in PROCESS_STATUSES:
+            self.assertIn(status, documented)
+
+    @unittest.skipIf(REPO_ROOT is None, DOCS_SKIP_REASON)
+    def test_schema_file_documents_the_ambiguous_body_shape(self) -> None:
+        """The documented 409 body is the one the view serializes."""
+        schema = json.loads((REPO_ROOT / OPENAPI_RELPATH).read_text(encoding="utf-8"))
+        ref = schema["paths"]["/process"]["post"]["responses"]["409"]["content"][
+            "application/json"
+        ]["schema"]["$ref"]
+        name = ref.rsplit("/", 1)[-1]
+        documented = schema["components"]["schemas"][name]["properties"]
+        self.assertIn("detail", documented)
+        self.assertEqual(
+            set(documented["objects"]["items"]["properties"]),
+            AMBIGUOUS_OBJECT_KEYS,
+        )
 
     def test_retired_parameter_is_not_accepted(self) -> None:
         """The old name is refused as missing, not read as a designation.

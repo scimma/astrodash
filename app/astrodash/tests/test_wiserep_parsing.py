@@ -18,6 +18,7 @@ from unittest import mock
 from django.test import SimpleTestCase
 
 from astrodash.infrastructure.wiserep.parsing import (
+    SPEC_ID_ALIASES,
     extract_csv_text_from_zip,
     find_column,
     parse_csv_rows,
@@ -28,6 +29,28 @@ if str(APP_DIR) not in sys.path:  # pragma: no cover - import shim
     sys.path.insert(0, str(APP_DIR))
 
 from wiserep_scrape import wiserep_monthly_scrape  # noqa: E402
+
+#: Captured WISeREP exports, read where a real header is the thing under test.
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "wiserep"
+
+#: The delimiter WISeREP's spectrum export uses.
+EXPORT_DELIMITER = "\t"
+
+
+def fixture_header(name: str) -> list[str]:
+    """Read a captured export's header as WISeREP spelled it.
+
+    Args:
+        name: The fixture's filename under ``fixtures/wiserep/``.
+
+    Returns:
+        The export's column names, in order.
+    """
+    text = extract_csv_text_from_zip(
+        (FIXTURES / name).read_bytes(), delimiter=EXPORT_DELIMITER
+    )
+    return list(parse_csv_rows(text, delimiter=EXPORT_DELIMITER)[0].keys())
+
 
 CSV_TEXT = (
     '"Obj. ID","IAU name","Spec. ID","Ascii file"\n'
@@ -206,6 +229,55 @@ class ColumnResolutionTests(SimpleTestCase):
                     find_column(WISEREP_TSV_HEADER, preferred, contains),
                     expected,
                 )
+
+
+class MissingColumnTests(SimpleTestCase):
+    """A column the export does not carry must resolve to nothing.
+
+    The fallback loop asks whether a header contains every ``contains`` token.
+    Given no tokens that question is vacuously true of the first header, so a
+    missing column used to resolve to whichever column came first -- for a
+    spectra export, the object's IAU name standing in for its spectrum id.
+    """
+
+    def test_empty_contains_matches_nothing(self):
+        self.assertIsNone(find_column(WISEREP_TSV_HEADER, ("No such column",)))
+
+    def test_empty_contains_does_not_fall_back_to_the_first_header(self):
+        header = ["IAU name", "JD", "Public", "Spec. type", "Spec. quality"]
+        self.assertIsNone(find_column(header, SPEC_ID_ALIASES))
+
+    def test_spectrum_id_is_absent_from_a_header_that_lacks_it(self):
+        header = [f for f in WISEREP_TSV_HEADER if f != "Spec. ID"]
+        self.assertIsNone(find_column(header, SPEC_ID_ALIASES))
+
+    def test_spectrum_id_resolves_in_a_real_export_header(self):
+        header = fixture_header("2023ixf_page0.zip")
+        self.assertEqual(len(header), 46)
+        self.assertEqual(find_column(header, SPEC_ID_ALIASES), "Spec. ID")
+
+    def test_spectrum_id_is_absent_once_a_real_header_drops_it(self):
+        header = [f for f in fixture_header("2023ixf_page0.zip") if f != "Spec. ID"]
+        self.assertIsNone(find_column(header, SPEC_ID_ALIASES))
+
+    def test_contains_tokens_still_match_a_renamed_column(self):
+        header = ["Obj. ID", "IAU name", "Spectrum identifier", "JD"]
+        self.assertIsNone(find_column(header, SPEC_ID_ALIASES))
+        self.assertEqual(
+            find_column(header, SPEC_ID_ALIASES, ("spec", "id")),
+            "Spectrum identifier",
+        )
+
+    def test_contains_tokens_that_match_nothing_still_resolve_to_none(self):
+        self.assertIsNone(
+            find_column(WISEREP_TSV_HEADER, ("No such column",), ("nothing", "here"))
+        )
+
+    def test_a_preferred_alias_is_preferred_over_the_fallback(self):
+        header = ["Spectrum identifier", "Spec. ID"]
+        self.assertEqual(
+            find_column(header, SPEC_ID_ALIASES, ("spec", "id")), "Spec. ID"
+        )
 
 
 class ExpansionLimitTests(SimpleTestCase):

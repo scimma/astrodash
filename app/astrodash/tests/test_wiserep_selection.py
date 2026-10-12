@@ -184,6 +184,30 @@ class EligibilityTests(SimpleTestCase):
 
         self.assertEqual([c.spectrum_id for c in result.candidates], ["90003"])
 
+    def test_row_without_a_spectrum_identifier_is_excluded(self) -> None:
+        """A row with no ``Spec. ID`` cannot be retained, so it cannot be chosen."""
+        rows = [
+            row(**{"Spec. ID": "", "JD": "2452500.5"}),
+            row(**{"Spec. ID": "90002", "JD": "2452512.5"}),
+        ]
+
+        result = rank_candidates(rows, "2002er")
+
+        self.assertIsNone(result.refusal)
+        self.assertEqual([c.spectrum_id for c in result.candidates], ["90002"])
+
+    def test_only_rows_without_an_identifier_refuse(self) -> None:
+        rows = [
+            row(**{"Spec. ID": "", "JD": "2452500.5"}),
+            row(**{"Spec. ID": " ", "JD": "2452512.5"}),
+        ]
+
+        result = rank_candidates(rows, "2002er")
+
+        self.assertEqual(result.refusal, RefusalReason.NO_ELIGIBLE_SPECTRUM)
+        self.assertEqual(result.candidates, ())
+        self.assertIsNone(result.selected)
+
     def test_no_eligible_row_refuses_rather_than_succeeding_empty(self) -> None:
         rows = [
             row(**{"Spec. ID": "90001", "Spec. type": "Host"}),

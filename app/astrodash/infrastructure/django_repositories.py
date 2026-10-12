@@ -5,17 +5,24 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional, List
 
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from astrodash.config.logging import get_logger
 from astrodash.domain.models.spectrum import Spectrum
 from astrodash.domain.models.user_model import UserModel
-from astrodash.domain.repositories.spectrum_repository import SpectrumRepository
+from astrodash.domain.repositories.spectrum_repository import (
+    RetainedSpectrumStore,
+    SpectrumRepository,
+)
 from astrodash.domain.repositories.model_repository import ModelRepository
 from astrodash.models import (
     SpectrumCandidateSetRecord,
     SpectrumRecord,
     UserModelRecord,
 )
+
+logger = get_logger(__name__)
 
 
 def _latest_for(object_designation: str, source_spectrum_id: str):
@@ -43,7 +50,7 @@ def _latest_for(object_designation: str, source_spectrum_id: str):
     )
 
 
-class DjangoSpectrumRepository(SpectrumRepository):
+class DjangoSpectrumRepository(SpectrumRepository, RetainedSpectrumStore):
     """Persist spectra using the AstroDash Django database."""
 
     def save(self, spectrum: Spectrum) -> Spectrum:
@@ -54,13 +61,22 @@ class DjangoSpectrumRepository(SpectrumRepository):
         retrievals of one epoch do not accumulate rows while distinct epochs of
         the same object coexist.
 
+        That lookup and the write that follows it are two statements, so two
+        first fetches of one epoch can both read no row, both mint a primary
+        key and both insert. Migration 0003 makes the pair unique, so the loser
+        raises ``IntegrityError``; it is caught here and the winner's row is
+        updated instead, because an unhandled one would surface to the
+        researcher as an unusable spectrum.
+
         Args:
             spectrum: The spectrum to persist.
 
         Returns:
-            The spectrum, with its id populated.
+            The spectrum, with its id populated -- the winner's id when a
+            concurrent writer inserted the row for this epoch first.
         """
-        if spectrum.object_designation and spectrum.source_spectrum_id:
+        keyed = bool(spectrum.object_designation and spectrum.source_spectrum_id)
+        if keyed:
             retained = _latest_for(
                 spectrum.object_designation, spectrum.source_spectrum_id
             )
@@ -80,7 +96,33 @@ class DjangoSpectrumRepository(SpectrumRepository):
         }
         if spectrum.retrieved_at is not None:
             defaults["created_at"] = spectrum.retrieved_at
-        SpectrumRecord.objects.update_or_create(id=spectrum.id, defaults=defaults)
+        if not keyed:
+            SpectrumRecord.objects.update_or_create(id=spectrum.id, defaults=defaults)
+            return spectrum
+
+        # The savepoint matters as much as the catch: on PostgreSQL a failed
+        # statement poisons the surrounding transaction, so the re-read below
+        # would fail too without one.
+        try:
+            with transaction.atomic():
+                SpectrumRecord.objects.update_or_create(
+                    id=spectrum.id, defaults=defaults
+                )
+        except IntegrityError:
+            winner = _latest_for(
+                spectrum.object_designation, spectrum.source_spectrum_id
+            )
+            if winner is None:
+                raise
+            logger.info(
+                "Concurrent retention of %r spectrum %s resolved onto row %s",
+                spectrum.object_designation,
+                spectrum.source_spectrum_id,
+                winner.id,
+            )
+            spectrum.id = str(winner.id)
+            with transaction.atomic():
+                SpectrumRecord.objects.filter(id=spectrum.id).update(**defaults)
         return spectrum
 
     def get_by_id(self, spectrum_id: str) -> Optional[Spectrum]:

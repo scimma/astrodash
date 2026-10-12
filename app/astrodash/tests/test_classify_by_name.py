@@ -39,6 +39,9 @@ from astrodash.models import SOURCE_NAME_WISEREP
 DESIGNATION = "SN 2026puh"
 INTERNAL_NAMES = "ATLAS26hqe, GOTO26gey"
 
+#: A second object, for the cases where one lookup must not inherit another's.
+OTHER_DESIGNATION = "SN 2026zzz"
+
 #: Every spelling of that designation a researcher may submit (AE2).
 SPELLINGS = (
     "2026puh",
@@ -492,6 +495,179 @@ class RedshiftTests(ClassifyByNameTestCase):
         known_z_input = re.search(r'<input[^>]*id="id_known_z"[^>]*>', body).group(0)
         self.assertNotIn("checked", known_z_input)
 
+    def test_the_refusal_is_reported_where_focus_lands(self):
+        """The region focus moves to carries the refusal, not nothing."""
+        self.select_model("transformer")
+        client = StubClient(
+            rows=[
+                export_row(
+                    "5001", "2026-06-25 00:00:00", "2461186.5", "GMOS-S", redshift=""
+                )
+            ]
+        )
+        service = self.build_service(
+            client, StubWiserepRepo({"5001": spectrum_for("5001", redshift=None)})
+        )
+        response, _ = self.submit(service, self.form_payload())
+        self.assertIn(REDSHIFT_REQUIRED_MESSAGE, self.report(response))
+
+    def test_a_second_designation_takes_its_own_recorded_redshift(self):
+        """The field still holding the first object's value is not an edit."""
+        self.select_model("transformer")
+        first_service = self.build_service(
+            StubClient(rows=[EARLIEST_ROW]),
+            StubWiserepRepo({"5001": spectrum_for("5001")}),
+        )
+        self.submit(first_service, self.form_payload())
+
+        second_row = export_row(
+            "6001",
+            "2026-08-01 00:00:00",
+            "2461223.5",
+            "GMOS-S",
+            designation=OTHER_DESIGNATION,
+            internal_names="ATLAS26zzz",
+            redshift="0.25",
+        )
+        second_service = self.build_service(
+            StubClient(rows=[second_row]),
+            StubWiserepRepo({"6001": spectrum_for("6001", redshift=0.25)}),
+        )
+        response, classification_svc = self.submit(
+            second_service,
+            self.form_payload(
+                supernova_name=OTHER_DESIGNATION,
+                redshift="0.0086",
+                known_z="on",
+            ),
+        )
+        params = classification_svc.classify_spectrum.await_args.kwargs["params"]
+        self.assertEqual(params["zValue"], 0.25)
+        self.assertTrue(params["knownZ"])
+        self.assertIn('id="redshift-source-note"', response.content.decode())
+
+    def test_another_epoch_takes_its_own_recorded_redshift(self):
+        """The value the previous epoch filled in is not an edit either."""
+        self.select_model("transformer")
+        service = self.build_service(
+            StubClient(rows=[EARLIEST_ROW, LATER_ROW]),
+            StubWiserepRepo(
+                {
+                    "5001": spectrum_for("5001"),
+                    "5002": spectrum_for("5002", redshift=0.035),
+                }
+            ),
+        )
+        self.submit(service, self.form_payload())
+        response, classification_svc = self.submit(
+            service,
+            self.form_payload(
+                source_spectrum_id="5002",
+                redshift="0.0086",
+                known_z="on",
+            ),
+        )
+        params = classification_svc.classify_spectrum.await_args.kwargs["params"]
+        self.assertEqual(params["zValue"], 0.035)
+        self.assertTrue(params["knownZ"])
+        self.assertIn('id="redshift-source-note"', response.content.decode())
+
+    def test_an_empty_box_on_a_first_lookup_is_still_filled_in(self):
+        """R9: a name alone classifies, and the page submits an empty box."""
+        client = StubClient(rows=[EARLIEST_ROW])
+        service = self.build_service(
+            client, StubWiserepRepo({"5001": spectrum_for("5001")})
+        )
+        response, classification_svc = self.submit(
+            service, self.form_payload(redshift="")
+        )
+        params = classification_svc.classify_spectrum.await_args.kwargs["params"]
+        self.assertEqual(params["zValue"], 0.0086)
+        self.assertTrue(params["knownZ"])
+        self.assertIn('id="redshift-source-note"', response.content.decode())
+
+    def test_a_cleared_redshift_classifies_without_one(self):
+        """R10: removing the prefilled value is honoured, not written back."""
+        client = StubClient(rows=[EARLIEST_ROW])
+        service = self.build_service(
+            client, StubWiserepRepo({"5001": spectrum_for("5001")})
+        )
+        self.submit(service, self.form_payload())
+        response, classification_svc = self.submit(
+            service, self.form_payload(redshift="")
+        )
+        params = classification_svc.classify_spectrum.await_args.kwargs["params"]
+        self.assertTrue(classification_svc.classify_spectrum.await_count)
+        self.assertIsNone(params["zValue"])
+        self.assertFalse(params["knownZ"])
+        body = response.content.decode()
+        self.assertNotIn('id="redshift-source-note"', body)
+        redshift_input = re.search(r'<input[^>]*id="id_redshift"[^>]*>', body).group(0)
+        self.assertNotIn("value=", redshift_input)
+        known_z_input = re.search(r'<input[^>]*id="id_known_z"[^>]*>', body).group(0)
+        self.assertNotIn("checked", known_z_input)
+
+    def test_unchecking_known_redshift_classifies_without_one(self):
+        """R10: the checkbox is an opt-out even with the value still in view."""
+        client = StubClient(rows=[EARLIEST_ROW])
+        service = self.build_service(
+            client, StubWiserepRepo({"5001": spectrum_for("5001")})
+        )
+        self.submit(service, self.form_payload())
+        response, classification_svc = self.submit(
+            service, self.form_payload(redshift="0.0086")
+        )
+        params = classification_svc.classify_spectrum.await_args.kwargs["params"]
+        self.assertTrue(classification_svc.classify_spectrum.await_count)
+        self.assertIsNone(params["zValue"])
+        self.assertFalse(params["knownZ"])
+        self.assertNotIn('id="redshift-source-note"', response.content.decode())
+
+    def test_the_prefilled_value_left_alone_is_still_the_source_s(self):
+        """R9: an untouched prefill is used and stays labelled as the source's."""
+        client = StubClient(rows=[EARLIEST_ROW])
+        service = self.build_service(
+            client, StubWiserepRepo({"5001": spectrum_for("5001")})
+        )
+        self.submit(service, self.form_payload())
+        response, classification_svc = self.submit(
+            service, self.form_payload(redshift="0.0086", known_z="on")
+        )
+        params = classification_svc.classify_spectrum.await_args.kwargs["params"]
+        self.assertEqual(params["zValue"], 0.0086)
+        self.assertTrue(params["knownZ"])
+        self.assertIn('id="redshift-source-note"', response.content.decode())
+
+    def test_the_opt_out_holds_on_the_next_submission(self):
+        """The value does not spring back once it has been declined."""
+        client = StubClient(rows=[EARLIEST_ROW])
+        service = self.build_service(
+            client, StubWiserepRepo({"5001": spectrum_for("5001")})
+        )
+        self.submit(service, self.form_payload())
+        self.submit(service, self.form_payload(redshift=""))
+        response, classification_svc = self.submit(
+            service, self.form_payload(redshift="", smoothing=3)
+        )
+        params = classification_svc.classify_spectrum.await_args.kwargs["params"]
+        self.assertIsNone(params["zValue"])
+        self.assertFalse(params["knownZ"])
+        self.assertNotIn('id="redshift-source-note"', response.content.decode())
+
+    def test_a_required_redshift_model_refuses_rather_than_overriding(self):
+        """An opt-out under a model that needs one refuses, as an upload does."""
+        self.select_model("transformer")
+        client = StubClient(rows=[EARLIEST_ROW])
+        service = self.build_service(
+            client, StubWiserepRepo({"5001": spectrum_for("5001")})
+        )
+        self.submit(service, self.form_payload())
+        response, classification_svc = self.submit(
+            service, self.form_payload(redshift="")
+        )
+        self.assertEqual(classification_svc.classify_spectrum.await_count, 0)
+        self.assertIn(REDSHIFT_REQUIRED_MESSAGE, self.report(response))
+
 
 class EpochControlTests(ClassifyByNameTestCase):
     """Switching to another eligible spectrum of the same object."""
@@ -689,7 +865,24 @@ class AccessibilityTests(ClassifyByNameTestCase):
         status = re.search(r'<div id="lookup-status"[^>]*>', self.body).group(0)
         self.assertIn('role="status"', status)
         self.assertIn('aria-live="polite"', status)
-        self.assertIn("button.disabled = true;", self.body)
+        self.assertIn('button.setAttribute("aria-disabled", "true");', self.body)
         self.assertIn('"Looking up " + designation +', self.body)
         epoch_form = re.search(r'<form[^>]*id="epoch-form"[^>]*>', self.body).group(0)
         self.assertIn("by-name-aware", epoch_form)
+
+    def test_the_in_flight_guard_covers_every_submit_path_and_lifts_itself(self):
+        """One flag guards all by-name forms, and a restore clears it."""
+        # The guard is page-wide, not per-form: a second submit from any
+        # by-name form is cancelled while one is already waiting on a worker.
+        self.assertIn(
+            "document.querySelectorAll('form.by-name-aware button[type=\"submit\"]')",
+            self.body,
+        )
+        self.assertIn("if (inFlight) {", self.body)
+        self.assertIn("event.preventDefault();", self.body)
+        # The marking is lifted again, so an aborted navigation or a
+        # back/forward restore does not leave the page unusable. The buttons
+        # are aria-disabled rather than disabled, so they keep keyboard focus.
+        self.assertIn('window.addEventListener("pageshow"', self.body)
+        self.assertIn("event.persisted", self.body)
+        self.assertNotIn("button.disabled = true;", self.body)
