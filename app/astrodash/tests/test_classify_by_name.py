@@ -870,6 +870,60 @@ class AccessibilityTests(ClassifyByNameTestCase):
         epoch_form = re.search(r'<form[^>]*id="epoch-form"[^>]*>', self.body).group(0)
         self.assertIn("by-name-aware", epoch_form)
 
+    def test_a_lookup_in_flight_shows_a_moving_indicator_where_it_is_seen(self):
+        """The pending state is visible, animated and placed at the click.
+
+        The report region sits in a different column from the sidebar form, so
+        words written only there can go unread while the researcher is looking
+        at the button they just pressed. The spinner therefore goes on the
+        pressed button, and the elapsed seconds are what distinguish a live
+        request from a stalled one.
+        """
+        # The spinner is the project's own, because the pinned Bootstrap
+        # 4.1.3 ships no spinner utility to lean on.
+        self.assertIn(".lookup-spinner {", self.body)
+        self.assertIn("@keyframes lookup-spin", self.body)
+        self.assertIn("animation: lookup-spin", self.body)
+        self.assertNotIn("spinner-border", self.body)
+
+        # It lands on the button that was actually pressed.
+        self.assertIn("event.submitter", self.body)
+        self.assertIn(
+            '<span class="lookup-spinner mr-2"></span>Looking up...', self.body
+        )
+        self.assertIn("data-idle-label", self.body)
+
+        # And the visible panel carries the words plus a ticking counter.
+        panel = re.search(r'<div id="lookup-pending"[^>]*>', self.body).group(0)
+        self.assertIn("alert", panel)
+        self.assertIn("hidden", panel)
+        self.assertIn('id="lookup-elapsed"', self.body)
+        self.assertIn("window.setInterval(", self.body)
+
+    def test_the_moving_indicator_does_not_talk_over_the_announcement(self):
+        """Motion and the counter stay out of the live regions.
+
+        ``#lookup-status`` announces once. The visual panel repeats those words
+        for sighted users, so it is aria-hidden: the surrounding region is
+        itself ``aria-live``, and a counter inside it would otherwise be read
+        out every second.
+        """
+        panel = re.search(r'<div id="lookup-pending"[^>]*>', self.body).group(0)
+        self.assertIn('aria-hidden="true"', panel)
+
+        # The announcement stays screen-reader-only rather than being toggled
+        # visible, because the panel is now what sighted users read.
+        self.assertNotIn('status.classList.toggle("sr-only"', self.body)
+
+        # A researcher who has asked for less motion still gets the counter.
+        self.assertIn("prefers-reduced-motion: reduce", self.body)
+        self.assertIn("animation: none;", self.body)
+
+        # The counter is torn down on every release path, so a restored
+        # document does not resume ticking.
+        self.assertIn("stopElapsed();", self.body)
+        self.assertIn("window.clearInterval(", self.body)
+
     def test_the_in_flight_guard_covers_every_submit_path_and_lifts_itself(self):
         """One flag guards all by-name forms, and a restore clears it."""
         # The guard is page-wide, not per-form: a second submit from any
