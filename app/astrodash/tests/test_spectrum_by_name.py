@@ -1485,6 +1485,7 @@ class WorkerThreadConnectionTests(TransactionTestCase):
         )
 
 
+@override_settings(CACHES=LOCMEM_CACHE)
 class CallSiteConnectionTests(TransactionTestCase):
     """A by-name lookup closes the connections its dispatches open.
 
