@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest import mock
 
+from asgiref.sync import async_to_sync
 from django.core.cache import cache
 from django.db import OperationalError, connections
 from django.test import Client, SimpleTestCase, TransactionTestCase, override_settings
@@ -46,10 +47,8 @@ from astrodash.core.exceptions import (
 from astrodash.domain.models.spectrum import Spectrum
 from astrodash.domain.repositories.spectrum_repository import RetainedSpectrumStore
 from astrodash.domain.services import spectrum_service as service_module
-from astrodash.domain.services.spectrum_service import (
-    SpectrumService,
-    _in_db_thread,
-)
+from astrodash.domain.services.spectrum_service import SpectrumService
+from astrodash.infrastructure.db_threads import run_db_work
 from astrodash.infrastructure.django_repositories import (
     DjangoCandidateSetRepository,
     DjangoSpectrumRepository,
@@ -1449,38 +1448,38 @@ class InfrastructureFailureTests(SimpleTestCase):
 class WorkerThreadConnectionTests(TransactionTestCase):
     """Database work on a worker thread closes that thread's connection.
 
-    ``asyncio.to_thread`` runs the seam's storage work on an executor thread,
-    and Django opens a separate connection per thread while closing only the
-    request thread's. A connection left open on a worker thread outlives the
-    work that opened it: in the suite it blocks ``DROP DATABASE`` at teardown,
-    and in a deployment it abandons one backend per worker thread, since these
-    views call ``asyncio.run`` per request and so build a fresh executor each
-    time.
+    The seam runs storage work on a dispatched thread, and Django opens a
+    separate connection per thread while closing only the request thread's. A
+    connection left open on a worker thread outlives the work that opened it:
+    in the suite it blocks ``DROP DATABASE`` at teardown, and in a deployment
+    it abandons one backend per worker thread, since the views reach these
+    services through ``async_to_sync``, which builds a fresh single-worker
+    executor -- and so a fresh worker thread -- on every call.
+
+    The seam owns the dispatch, so this test cannot read the connection state
+    from its own thread: ``connections`` is keyed per thread, and the wrapper
+    the test thread sees is not the one the dispatched thread used. It instead
+    captures that thread's wrapper object from inside the dispatched work and
+    inspects the captured wrapper once the dispatch has returned.
     """
 
     def test_database_work_closes_the_worker_threads_connection(self) -> None:
         """The connection the worker opens is gone once the work returns."""
-        observed: Dict[str, bool] = {}
+        observed: Dict[str, Any] = {}
 
         def work() -> None:
             """Touch the database so this thread opens its own connection."""
             SpectrumRecord.objects.exists()
-            observed["open_during"] = connections["default"].connection is not None
+            wrapper = connections["default"]
+            observed["wrapper"] = wrapper
+            observed["open_during"] = wrapper.connection is not None
 
-        def worker() -> None:
-            """Run the work through the seam's wrapper, as to_thread does."""
-            _in_db_thread(work)
-            observed["closed_after"] = connections["default"].connection is None
+        async_to_sync(run_db_work)(work)
 
-        thread = threading.Thread(target=worker)
-        thread.start()
-        thread.join(timeout=20)
-
-        self.assertFalse(thread.is_alive(), "the worker thread never finished")
         self.assertTrue(
             observed.get("open_during"), "the work never opened a connection"
         )
-        self.assertTrue(
-            observed.get("closed_after"),
+        self.assertIsNone(
+            observed["wrapper"].connection,
             "the worker thread's connection outlived the work that opened it",
         )
