@@ -170,9 +170,9 @@ class OnedCnnClassifier(BaseClassifier):
             return {}
 
     async def classify(self, spectrum: Any) -> dict:
-        import asyncio
+        from astrodash.infrastructure.db_threads import run_non_db_work
 
-        return await asyncio.to_thread(self.classify_sync, spectrum)
+        return await run_non_db_work(self.classify_sync, spectrum)
 
 
 class OnedCnnZClassifier(OnedCnnClassifier):

@@ -1,7 +1,7 @@
 from astrodash.infrastructure.ml.templates import SpectrumTemplateInterface
 from astrodash.config.logging import get_logger
 from astrodash.core.exceptions import ValidationException
-import asyncio
+from astrodash.infrastructure.db_threads import run_non_db_work
 from typing import Dict, Any, List
 
 logger = get_logger(__name__)
@@ -31,7 +31,7 @@ class TemplateAnalysisService:
             logger.info("Getting analysis options from templates")
 
             # Get all available templates
-            templates = await asyncio.to_thread(self.template_handler.get_all_templates)
+            templates = await run_non_db_work(self.template_handler.get_all_templates)
 
             # Validate and extract valid SN types and age bins
             valid_options = self._validate_and_extract_options(templates)
@@ -86,7 +86,7 @@ class TemplateAnalysisService:
             Dictionary with template statistics
         """
         try:
-            templates = await asyncio.to_thread(self.template_handler.get_all_templates)
+            templates = await run_non_db_work(self.template_handler.get_all_templates)
 
             total_sn_types = len(templates)
             total_age_bins = sum(len(age_bins) for age_bins in templates.values())
@@ -131,7 +131,9 @@ class TemplateAnalysisService:
             True if template exists and is valid, False otherwise
         """
         try:
-            return await asyncio.to_thread(self.template_handler.validate_template, sn_type, age_bin)
+            return await run_non_db_work(
+                self.template_handler.validate_template, sn_type, age_bin
+            )
         except Exception as e:
             logger.error(f"Error validating template request: {e}")
             return False

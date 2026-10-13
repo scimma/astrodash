@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest import mock
 
+from asgiref.sync import async_to_sync
 from django.core.cache import cache
 from django.db import OperationalError, connections
 from django.test import Client, SimpleTestCase, TransactionTestCase, override_settings
@@ -46,10 +47,8 @@ from astrodash.core.exceptions import (
 from astrodash.domain.models.spectrum import Spectrum
 from astrodash.domain.repositories.spectrum_repository import RetainedSpectrumStore
 from astrodash.domain.services import spectrum_service as service_module
-from astrodash.domain.services.spectrum_service import (
-    SpectrumService,
-    _in_db_thread,
-)
+from astrodash.domain.services.spectrum_service import SpectrumService
+from astrodash.infrastructure.db_threads import run_db_work
 from astrodash.infrastructure.django_repositories import (
     DjangoCandidateSetRepository,
     DjangoSpectrumRepository,
@@ -1449,38 +1448,190 @@ class InfrastructureFailureTests(SimpleTestCase):
 class WorkerThreadConnectionTests(TransactionTestCase):
     """Database work on a worker thread closes that thread's connection.
 
-    ``asyncio.to_thread`` runs the seam's storage work on an executor thread,
-    and Django opens a separate connection per thread while closing only the
-    request thread's. A connection left open on a worker thread outlives the
-    work that opened it: in the suite it blocks ``DROP DATABASE`` at teardown,
-    and in a deployment it abandons one backend per worker thread, since these
-    views call ``asyncio.run`` per request and so build a fresh executor each
-    time.
+    The seam runs storage work on a dispatched thread, and Django opens a
+    separate connection per thread while closing only the request thread's. A
+    connection left open on a worker thread outlives the work that opened it:
+    in the suite it blocks ``DROP DATABASE`` at teardown, and in a deployment
+    it abandons one backend per worker thread, since the views reach these
+    services through ``async_to_sync``, which builds a fresh single-worker
+    executor -- and so a fresh worker thread -- on every call.
+
+    The seam owns the dispatch, so this test cannot read the connection state
+    from its own thread: ``connections`` is keyed per thread, and the wrapper
+    the test thread sees is not the one the dispatched thread used. It instead
+    captures that thread's wrapper object from inside the dispatched work and
+    inspects the captured wrapper once the dispatch has returned.
     """
 
     def test_database_work_closes_the_worker_threads_connection(self) -> None:
         """The connection the worker opens is gone once the work returns."""
-        observed: Dict[str, bool] = {}
+        observed: Dict[str, Any] = {}
 
         def work() -> None:
             """Touch the database so this thread opens its own connection."""
             SpectrumRecord.objects.exists()
-            observed["open_during"] = connections["default"].connection is not None
+            wrapper = connections["default"]
+            observed["wrapper"] = wrapper
+            observed["open_during"] = wrapper.connection is not None
 
-        def worker() -> None:
-            """Run the work through the seam's wrapper, as to_thread does."""
-            _in_db_thread(work)
-            observed["closed_after"] = connections["default"].connection is None
+        async_to_sync(run_db_work)(work)
 
-        thread = threading.Thread(target=worker)
-        thread.start()
-        thread.join(timeout=20)
-
-        self.assertFalse(thread.is_alive(), "the worker thread never finished")
         self.assertTrue(
             observed.get("open_during"), "the work never opened a connection"
         )
-        self.assertTrue(
-            observed.get("closed_after"),
+        self.assertIsNone(
+            observed["wrapper"].connection,
             "the worker thread's connection outlived the work that opened it",
         )
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class CallSiteConnectionTests(TransactionTestCase):
+    """A by-name lookup closes the connections its dispatches open.
+
+    ``WorkerThreadConnectionTests`` above pins the seam's own contract by
+    calling an entry point directly. That cannot catch a call site that stops
+    using the seam, which is the way this defect would come back: the seam
+    would still be correct and the leak would be somewhere else. So this case
+    drives the real service over the real repositories, exactly as the
+    interactive classify view does, and observes every dispatched call.
+
+    The observation has to be made inside the dispatched thread, because
+    ``connections`` is keyed per thread and the wrapper the test thread sees is
+    never the one the dispatched work used. The recording repositories below
+    capture their own thread's wrapper as the service calls them, and the test
+    inspects those captured wrappers afterwards. Holding a reference to each
+    wrapper also keeps the cycle collector from closing it nondeterministically
+    and flattering the result.
+    """
+
+    def setUp(self) -> None:
+        """Start from an empty cache so the lookup really resolves."""
+        cache.clear()
+        self.calls: List[Dict[str, Any]] = []
+
+    def _record(self, name: str, open_on_entry: bool) -> None:
+        """Capture the calling thread, its wrapper, and the entry state.
+
+        ``open_on_entry`` is the observable that catches a bypassed call whose
+        leaked connection a later routed dispatch on the same executor thread
+        would otherwise close: dispatched work must never arrive on a thread
+        that already holds an open connection.
+
+        Args:
+            name: The repository method being recorded.
+            open_on_entry: Whether this thread already held an open connection
+                when the call began.
+        """
+        wrapper = connections["default"]
+        self.calls.append(
+            {
+                "name": name,
+                "thread": threading.current_thread(),
+                "wrapper": wrapper,
+                "open_on_entry": open_on_entry,
+                "open_during": wrapper.connection is not None,
+            }
+        )
+
+    def _repositories(self):
+        """Build repositories that record each call the service dispatches.
+
+        Returns:
+            A ``(spectrum_repo, candidate_set_repo)`` pair over the real
+            Django repositories.
+        """
+        record = self._record
+
+        class RecordingSpectrumRepo(DjangoSpectrumRepository):
+            """The real retained-spectrum store, with a call log."""
+
+            def save(self, spectrum_to_save: Spectrum) -> Spectrum:
+                """Save, recording where the save ran.
+
+                Args:
+                    spectrum_to_save: The spectrum being retained.
+
+                Returns:
+                    Whatever the real repository returns.
+                """
+                on_entry = connections["default"].connection is not None
+                saved = super().save(spectrum_to_save)
+                record("spectrum.save", on_entry)
+                return saved
+
+            def get_by_designation_and_spectrum_id(
+                self, designation: str, spectrum_id: str
+            ) -> Optional[Spectrum]:
+                """Read retention, recording where the read ran.
+
+                Args:
+                    designation: The object designation looked up.
+                    spectrum_id: The upstream spectrum identifier.
+
+                Returns:
+                    Whatever the real repository returns.
+                """
+                on_entry = connections["default"].connection is not None
+                found = super().get_by_designation_and_spectrum_id(
+                    designation, spectrum_id
+                )
+                record("spectrum.get_by_designation_and_spectrum_id", on_entry)
+                return found
+
+        class RecordingCandidateSetRepo(DjangoCandidateSetRepository):
+            """The real candidate-set store, with a call log."""
+
+            def get(self, normalized_name: str) -> Optional[Dict[str, Any]]:
+                """Read the stored set, recording where the read ran.
+
+                Args:
+                    normalized_name: The normalized designation.
+
+                Returns:
+                    Whatever the real repository returns.
+                """
+                on_entry = connections["default"].connection is not None
+                found = super().get(normalized_name)
+                record("candidate_set.get", on_entry)
+                return found
+
+        return RecordingSpectrumRepo(), RecordingCandidateSetRepo()
+
+    def test_a_lookup_leaves_no_connection_open_on_its_threads(self) -> None:
+        """Every dispatched storage call closes its own thread's connection."""
+        spectrum_repo, candidate_set_repo = self._repositories()
+        service = SpectrumService(
+            file_repo=None,
+            wiserep_repo=StubWiserepRepo(spectrum()),
+            db_repo=spectrum_repo,
+            candidate_set_repo=candidate_set_repo,
+            wiserep_client=StubClient(),
+            settings=mock.Mock(),
+        )
+
+        lookup(service)
+
+        self.assertTrue(self.calls, "the lookup dispatched no storage work")
+        caller = threading.current_thread()
+        for call in self.calls:
+            with self.subTest(call=call["name"]):
+                self.assertIsNot(
+                    call["thread"],
+                    caller,
+                    f"{call['name']} ran in the caller's thread, not a dispatched one",
+                )
+                self.assertFalse(
+                    call["open_on_entry"],
+                    f"{call['name']} was dispatched onto a thread that already "
+                    "held an open connection, so an earlier call site leaked",
+                )
+                self.assertTrue(
+                    call["open_during"],
+                    f"{call['name']} never opened a connection, so this case "
+                    "proves nothing about closing one",
+                )
+                self.assertIsNone(
+                    call["wrapper"].connection,
+                    f"the connection {call['name']} opened outlived the lookup",
+                )

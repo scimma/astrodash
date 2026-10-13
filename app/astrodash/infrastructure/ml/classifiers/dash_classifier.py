@@ -270,8 +270,9 @@ class DashClassifier(BaseClassifier):
         """
         Async wrapper that runs the synchronous CPU-bound classify in a thread.
         """
-        import asyncio
-        return await asyncio.to_thread(self.classify_sync, spectrum)
+        from astrodash.infrastructure.db_threads import run_non_db_work
+
+        return await run_non_db_work(self.classify_sync, spectrum)
 
     def extract_embedding_sync(self, spectrum: Any) -> np.ndarray:
         """
@@ -295,8 +296,9 @@ class DashClassifier(BaseClassifier):
         """
         Async wrapper that runs extract_embedding_sync in a thread.
         """
-        import asyncio
-        return await asyncio.to_thread(self.extract_embedding_sync, spectrum)
+        from astrodash.infrastructure.db_threads import run_non_db_work
+
+        return await run_non_db_work(self.extract_embedding_sync, spectrum)
 
     def load_model_from_state_dict(self, state_dict, n_classes):
         """

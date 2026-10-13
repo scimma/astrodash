@@ -3,6 +3,7 @@ from astrodash.domain.models.user_model import UserModel
 from astrodash.domain.repositories.model_repository import ModelRepository
 from astrodash.infrastructure.ml.model_loader import ModelLoader, ModelValidator
 from astrodash.infrastructure.storage.model_storage import ModelStorage
+from astrodash.infrastructure.db_threads import run_db_work
 from astrodash.shared.utils.validators import validate_model_upload_request, ValidationError, validate_user_model_basic
 from astrodash.core.exceptions import (
     ModelNotFoundException,
@@ -13,7 +14,6 @@ from astrodash.core.exceptions import (
 )
 from astrodash.config.logging import get_logger
 import uuid
-import asyncio
 
 logger = get_logger(__name__)
 
@@ -126,7 +126,7 @@ class ModelService:
             )
 
             # Save to repository
-            saved_model = await asyncio.to_thread(self.model_repo.save, user_model)
+            saved_model = await run_db_work(self.model_repo.save, user_model)
 
             return saved_model, model_info
 
@@ -243,18 +243,18 @@ class ModelService:
 
         # Check for duplicate names (if name is provided)
         if model.name:
-            existing_models = await asyncio.to_thread(self.model_repo.get_by_owner, model.owner or "")
+            existing_models = await run_db_work(self.model_repo.get_by_owner, model.owner or "")
             for existing in existing_models:
                 if existing.name == model.name:
                     raise ModelConflictException(f"Model with name '{model.name}' already exists")
 
-        return await asyncio.to_thread(self.model_repo.save, model)
+        return await run_db_work(self.model_repo.save, model)
 
     async def get_model(self, model_id: str) -> UserModel:
         """
         Get a model by ID with additional validation.
         """
-        model = await asyncio.to_thread(self.model_repo.get_by_id, model_id)
+        model = await run_db_work(self.model_repo.get_by_id, model_id)
         if not model:
             raise ModelNotFoundException(model_id)
 
@@ -269,13 +269,13 @@ class ModelService:
         """
         List all models with optional filtering.
         """
-        return await asyncio.to_thread(self.model_repo.list_all)
+        return await run_db_work(self.model_repo.list_all)
 
     async def delete_model(self, model_id: str) -> None:
         """
         Delete a model with cleanup.
         """
-        model = await asyncio.to_thread(self.model_repo.get_by_id, model_id)
+        model = await run_db_work(self.model_repo.get_by_id, model_id)
         if not model:
             raise ModelNotFoundException(model_id)
 
@@ -284,7 +284,7 @@ class ModelService:
             self.model_storage.cleanup_model_files(model_id)
 
         # Delete from repository
-        await asyncio.to_thread(self.model_repo.delete, model_id)
+        await run_db_work(self.model_repo.delete, model_id)
         logger.info(f"Model {model_id} deleted successfully")
 
     async def list_models_by_owner(self, owner: str) -> List[UserModel]:
@@ -294,7 +294,7 @@ class ModelService:
         if not owner:
             raise ValidationException("Owner cannot be empty")
 
-        return await asyncio.to_thread(self.model_repo.get_by_owner, owner)
+        return await run_db_work(self.model_repo.get_by_owner, owner)
 
     async def update_model_metadata(self, model_id: str, updates: Dict[str, Any]) -> UserModel:
         """
@@ -318,7 +318,7 @@ class ModelService:
             self.model_storage.update_metadata(model_id, updates)
 
         # Save to repository
-        return await asyncio.to_thread(self.model_repo.save, model)
+        return await run_db_work(self.model_repo.save, model)
 
     def get_model_info(self, model_id: str) -> Dict[str, Any]:
         """
