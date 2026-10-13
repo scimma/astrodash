@@ -22,7 +22,10 @@ syntactic check can confirm it, so :func:`run_non_db_work` verifies it: a
 connection open on the dispatched thread means the declaration was wrong, and
 the connection is closed and the offending callable logged rather than left to
 leak quietly. Closing rather than raising keeps a misdeclaration from turning a
-silent leak into a failed request.
+silent leak into a failed request. When in doubt, choose
+:func:`run_db_work`: work that reaches the database on only one branch, or
+through a queryset evaluated later, is database work, and the cost of being
+wrong in that direction is one connection close that was not needed.
 
 Closing only ever happens on the thread this module dispatched to. The caller's
 own connections are never touched, because closing every connection visible in
@@ -77,6 +80,30 @@ def _describe(work: Callable[..., Any]) -> str:
     return repr(work)
 
 
+def _close_quietly(work: Callable[..., Any]) -> None:
+    """Close this thread's connections without masking the work's outcome.
+
+    Both entry points close from a ``finally``, where a raising close would
+    replace whatever the work returned or raised and leave the caller
+    classifying the wrong failure. Django's ``close()`` can surface a backend
+    error when the socket is already broken, so the close error is logged and
+    swallowed: the work's own outcome is the one the caller needs, and the
+    thread is about to end regardless.
+
+    Args:
+        work: The callable whose dispatch is being cleaned up, named in the log
+            so a close failure can be traced to a call site.
+    """
+    try:
+        connections.close_all()
+    except Exception:  # noqa: BLE001 - a cleanup error must not mask the work
+        logger.exception(
+            "closing the connections opened by %s failed; the work's own "
+            "result stands and this thread is ending",
+            _describe(work),
+        )
+
+
 async def run_db_work(work: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """Run database work on a dispatched thread and close its connections.
 
@@ -98,7 +125,7 @@ async def run_db_work(work: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         try:
             return work(*args, **kwargs)
         finally:
-            connections.close_all()
+            _close_quietly(work)
 
     return await asyncio.to_thread(_run_and_close)
 
@@ -127,13 +154,13 @@ async def run_non_db_work(work: Callable[..., T], *args: Any, **kwargs: Any) -> 
         finally:
             opened = _aliases_with_open_connections()
             if opened:
-                connections.close_all()
                 logger.error(
                     "%s was dispatched as non-database work but opened a "
-                    "connection on %s; the connection was closed, but the "
+                    "connection on %s; the connection is being closed, but the "
                     "call site should run through run_db_work instead",
                     _describe(work),
                     ", ".join(opened),
                 )
+                _close_quietly(work)
 
     return await asyncio.to_thread(_run_and_check)

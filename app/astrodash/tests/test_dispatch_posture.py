@@ -30,6 +30,7 @@ by path, since it is the one place a dispatch primitive belongs.
 
 import ast
 import re
+import tempfile
 from pathlib import Path
 from textwrap import dedent
 from typing import List, Optional, Set, Tuple
@@ -46,14 +47,22 @@ SEAM_MODULE = Path("astrodash") / "infrastructure" / "db_threads.py"
 # Callables that start work on a thread or process the request did not create.
 # Spelled as the attribute or bare name actually called, so `asyncio.to_thread`,
 # a bare `to_thread` from a direct import, and an aliased import all resolve.
+# This set is closed, and keeping it current is part of adding a dependency:
+# a new library that starts threads of its own (a task queue, another ASGI
+# toolkit) passes the guard until its spelling is added here and to
+# FALLBACK_PATTERN, with a case in GuardPatternsTests.
 DISPATCH_CALL_NAMES = frozenset(
     {
         "to_thread",
         "run_in_executor",
         "Thread",
+        "Timer",
         "ThreadPoolExecutor",
         "ProcessPoolExecutor",
+        "Process",
         "sync_to_async",
+        "run_sync",
+        "run_in_threadpool",
     }
 )
 
@@ -63,8 +72,12 @@ DISPATCH_CALL_NAMES = frozenset(
 DISPATCH_SOURCE_MODULES = {
     "asyncio",
     "threading",
+    "multiprocessing",
     "concurrent.futures",
     "asgiref.sync",
+    "anyio",
+    "anyio.to_thread",
+    "starlette.concurrency",
 }
 
 LABEL = "undeclared off-thread dispatch"
@@ -72,8 +85,9 @@ LABEL = "undeclared off-thread dispatch"
 # Fallback for a file that does not parse. Deliberately not merged into the
 # syntax-tree result; see the module docstring.
 FALLBACK_PATTERN = re.compile(
-    r"\b(?:to_thread|run_in_executor|Thread|ThreadPoolExecutor"
-    r"|ProcessPoolExecutor|sync_to_async)\s*\("
+    r"\b(?:to_thread|run_in_executor|Thread|Timer|ThreadPoolExecutor"
+    r"|ProcessPoolExecutor|Process|sync_to_async|run_sync"
+    r"|run_in_threadpool)\s*\("
 )
 
 
@@ -116,6 +130,21 @@ class _DispatchVisitor(ast.NodeVisitor):
             for alias in node.names:
                 if alias.name in DISPATCH_CALL_NAMES and alias.asname:
                     self._aliases.add(alias.asname)
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Record a name bound directly to a dispatch primitive.
+
+        ``spawn = asyncio.to_thread`` followed by ``spawn(work)`` would
+        otherwise call a primitive through a name this visitor has never seen.
+
+        Args:
+            node: The assignment statement.
+        """
+        if self._is_dispatch(self._callee_name(node.value)):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._aliases.add(target.id)
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -174,7 +203,7 @@ def _scan_tree(text: str) -> Tuple[bool, List[int]]:
     for candidate in (text, dedent(text)):
         try:
             tree = ast.parse(candidate)
-        except SyntaxError:
+        except (SyntaxError, ValueError):
             continue
         visitor = _DispatchVisitor()
         visitor.visit(tree)
@@ -209,13 +238,23 @@ def _scan_source(text: str) -> List[Tuple[int, str]]:
 def _scan_file(path: Path) -> List[Tuple[int, str]]:
     """Scan one file for undeclared dispatches.
 
+    A file this guard cannot read is reported as clean rather than failing the
+    suite: the development tree is bind-mounted, so a dangling editor lock
+    symlink or a file that is not UTF-8 would otherwise fail this check for a
+    reason that has nothing to do with dispatch posture.
+
     Args:
         path: The file to read and scan.
 
     Returns:
-        The same shape :func:`_scan_source` returns.
+        The same shape :func:`_scan_source` returns. Empty for an unreadable
+        file.
     """
-    return _scan_source(path.read_text(encoding="utf-8"))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    return _scan_source(text)
 
 
 class NoUndeclaredDispatchTests(SimpleTestCase):
@@ -293,13 +332,64 @@ class GuardPatternsTests(SimpleTestCase):
         for call in (
             "threading.Thread(target=work).start()",
             "Thread(target=work).start()",
+            "threading.Timer(1.0, work).start()",
             "ThreadPoolExecutor(max_workers=1).submit(work)",
             "concurrent.futures.ProcessPoolExecutor().submit(work)",
+            "multiprocessing.Process(target=work).start()",
             "loop.run_in_executor(None, work)",
             "await sync_to_async(work)()",
+            "await anyio.to_thread.run_sync(work)",
+            "await run_in_threadpool(work)",
         ):
             with self.subTest(call=call):
                 self.assertTrue(self._flags(call))
+
+    def test_flags_a_name_assigned_a_dispatch_primitive(self) -> None:
+        """Binding the primitive to a local name does not hide it.
+
+        This is the evasion an import-alias check alone misses: the import is
+        ordinary and the rename happens in an assignment.
+        """
+        source = dedent(
+            """
+            import asyncio
+
+            spawn = asyncio.to_thread
+
+            async def run():
+                return await spawn(work)
+            """
+        )
+        self.assertTrue(self._flags(source))
+
+    def test_an_unreadable_file_is_reported_clean(self) -> None:
+        """A file this guard cannot read does not fail the suite.
+
+        The development tree is bind-mounted, so an editor lock symlink or a
+        file that is not UTF-8 would otherwise fail a check that has nothing to
+        do with dispatch posture.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "dangling.py"
+            missing.symlink_to(Path(directory) / "nothing-here.py")
+            self.assertEqual(_scan_file(missing), [])
+
+            not_utf8 = Path(directory) / "latin.py"
+            not_utf8.write_bytes(
+                b"# \xff\xfe not utf-8\nawait asyncio.to_thread(work)\n"
+            )
+            self.assertEqual(_scan_file(not_utf8), [])
+
+    def test_a_nul_byte_falls_back_to_the_line_pattern(self) -> None:
+        """Source ast.parse rejects outright is still scanned.
+
+        Which exception that is has moved between Python versions, so the scan
+        catches both and this case asserts only that the source is rejected.
+        """
+        source = "x = 1\x00\nawait asyncio.to_thread(work)\n"
+        with self.assertRaises((SyntaxError, ValueError)):
+            ast.parse(source)
+        self.assertTrue(self._flags(source))
 
     def test_does_not_flag_the_seam(self) -> None:
         """A call through either entry point is the declared path."""

@@ -109,7 +109,22 @@ class TemplateAnalysisDispatchTests(SimpleTestCase):
         non-database, so a quiet run is the evidence that the declaration on
         these call sites is true.
         """
+        observed: Dict[str, Any] = {}
+        inner = self.handler.get_all_templates
+
+        def watched() -> Dict[str, Any]:
+            """Run the real handler, capturing the dispatched thread's wrapper."""
+            templates = inner()
+            observed["wrapper"] = connections["default"]
+            return templates
+
+        self.handler.get_all_templates = watched  # type: ignore[method-assign]
+
         with self.assertNoLogs("astrodash.infrastructure.db_threads", "ERROR"):
             async_to_sync(self.service.get_analysis_options)()
 
-        self.assertIsNone(connections["default"].connection)
+        self.assertIsNone(
+            observed["wrapper"].connection,
+            "the dispatched thread opened a connection this path declares it "
+            "never opens",
+        )

@@ -151,6 +151,47 @@ class NonDatabaseWorkTests(TransactionTestCase):
             "non-database work opened a connection of its own",
         )
 
+    def test_keyword_arguments_pass_through(self) -> None:
+        """The non-database path forwards keyword arguments too.
+
+        Three of the production non-database call sites pass positional
+        arguments, and the seam's two paths forward them through the same
+        shape, so this pins the half that production does not exercise.
+        """
+
+        def work(first: int, *, second: int) -> int:
+            """Return something derived from both arguments."""
+            return first * 10 + second
+
+        result = async_to_sync(db_threads.run_non_db_work)(work, 4, second=2)
+
+        self.assertEqual(result, 42)
+
+    def test_a_misdeclared_call_leaves_the_callers_connection_alone(self) -> None:
+        """The misdeclaration close lands on the dispatched thread only.
+
+        ``run_db_work`` has the same guarantee pinned above. Without this case,
+        a change that moved the check to the caller's thread would be caught
+        for one entry point and not the other.
+        """
+        SpectrumRecord.objects.exists()
+        caller_wrapper = connections["default"]
+        self.assertIsNotNone(
+            caller_wrapper.connection, "the test's own connection was not open"
+        )
+
+        def lying_work() -> None:
+            """Declared non-database, but it queries."""
+            SpectrumRecord.objects.exists()
+
+        with self.assertLogs("astrodash.infrastructure.db_threads", "ERROR"):
+            async_to_sync(db_threads.run_non_db_work)(lying_work)
+
+        self.assertIsNotNone(
+            caller_wrapper.connection,
+            "the misdeclaration close reached the caller's connection",
+        )
+
     def test_a_misdeclared_call_is_detected_and_closed(self) -> None:
         """Work that reaches the database despite its declaration is caught.
 

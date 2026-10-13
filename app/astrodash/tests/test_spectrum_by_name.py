@@ -1509,17 +1509,27 @@ class CallSiteConnectionTests(TransactionTestCase):
         cache.clear()
         self.calls: List[Dict[str, Any]] = []
 
-    def _record(self, name: str) -> None:
-        """Capture the calling thread and its connection wrapper.
+    def _record(self, name: str, open_on_entry: bool) -> None:
+        """Capture the calling thread, its wrapper, and the entry state.
+
+        ``open_on_entry`` is the observable that catches a bypassed call whose
+        leaked connection a later routed dispatch on the same executor thread
+        would otherwise close: dispatched work must never arrive on a thread
+        that already holds an open connection.
 
         Args:
             name: The repository method being recorded.
+            open_on_entry: Whether this thread already held an open connection
+                when the call began.
         """
+        wrapper = connections["default"]
         self.calls.append(
             {
                 "name": name,
                 "thread": threading.current_thread(),
-                "wrapper": connections["default"],
+                "wrapper": wrapper,
+                "open_on_entry": open_on_entry,
+                "open_during": wrapper.connection is not None,
             }
         )
 
@@ -1544,8 +1554,9 @@ class CallSiteConnectionTests(TransactionTestCase):
                 Returns:
                     Whatever the real repository returns.
                 """
+                on_entry = connections["default"].connection is not None
                 saved = super().save(spectrum_to_save)
-                record("spectrum.save")
+                record("spectrum.save", on_entry)
                 return saved
 
             def get_by_designation_and_spectrum_id(
@@ -1560,10 +1571,11 @@ class CallSiteConnectionTests(TransactionTestCase):
                 Returns:
                     Whatever the real repository returns.
                 """
+                on_entry = connections["default"].connection is not None
                 found = super().get_by_designation_and_spectrum_id(
                     designation, spectrum_id
                 )
-                record("spectrum.get_by_designation_and_spectrum_id")
+                record("spectrum.get_by_designation_and_spectrum_id", on_entry)
                 return found
 
         class RecordingCandidateSetRepo(DjangoCandidateSetRepository):
@@ -1578,8 +1590,9 @@ class CallSiteConnectionTests(TransactionTestCase):
                 Returns:
                     Whatever the real repository returns.
                 """
+                on_entry = connections["default"].connection is not None
                 found = super().get(normalized_name)
-                record("candidate_set.get")
+                record("candidate_set.get", on_entry)
                 return found
 
         return RecordingSpectrumRepo(), RecordingCandidateSetRepo()
@@ -1606,6 +1619,16 @@ class CallSiteConnectionTests(TransactionTestCase):
                     call["thread"],
                     caller,
                     f"{call['name']} ran in the caller's thread, not a dispatched one",
+                )
+                self.assertFalse(
+                    call["open_on_entry"],
+                    f"{call['name']} was dispatched onto a thread that already "
+                    "held an open connection, so an earlier call site leaked",
+                )
+                self.assertTrue(
+                    call["open_during"],
+                    f"{call['name']} never opened a connection, so this case "
+                    "proves nothing about closing one",
                 )
                 self.assertIsNone(
                     call["wrapper"].connection,
