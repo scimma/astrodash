@@ -37,7 +37,6 @@ class DatabaseWorkTests(TransactionTestCase):
             """Touch the database and record where this ran."""
             SpectrumRecord.objects.exists()
             observed["thread"] = threading.current_thread()
-            observed["wrapper"] = connections["default"]
             return "done"
 
         result = async_to_sync(db_threads.run_db_work)(work)

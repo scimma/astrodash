@@ -2,8 +2,8 @@
 
 Django's connection handler is keyed per thread and per context, and
 ``asgiref.sync.async_to_sync`` -- how the view layer reaches these async
-services -- builds a fresh event loop, a fresh single-worker executor and a
-fresh ``contextvars`` context on every call. A connection opened on a
+services -- runs each call's event loop on a new thread, and with it a fresh
+default executor and a fresh ``contextvars`` context. A connection opened on a
 dispatched thread therefore belongs to a thread and a context that no request
 lifecycle ever cleans up: it survives the work returning, the thread dying and
 ordinary reference counting, and comes back only when CPython's cycle
@@ -47,13 +47,17 @@ T = TypeVar("T")
 def _aliases_with_open_connections() -> List[str]:
     """Report which database aliases hold an open connection on this thread.
 
-    Accessing an alias creates its connection wrapper but opens no backend, so
-    this is safe to call on a thread that has touched no database.
+    Only wrappers this thread already created are inspected, so a thread that
+    touched no database does no work here and gains no wrapper it never had.
 
     Returns:
         The aliases whose wrapper currently holds an open connection.
     """
-    return [alias for alias in connections if connections[alias].connection is not None]
+    return [
+        wrapper.alias
+        for wrapper in connections.all(initialized_only=True)
+        if wrapper.connection is not None
+    ]
 
 
 def _describe(work: Callable[..., Any]) -> str:

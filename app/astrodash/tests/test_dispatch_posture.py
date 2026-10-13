@@ -32,7 +32,7 @@ import ast
 import re
 from pathlib import Path
 from textwrap import dedent
-from typing import Dict, List, Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 from django.test import SimpleTestCase
 
@@ -46,14 +46,16 @@ SEAM_MODULE = Path("astrodash") / "infrastructure" / "db_threads.py"
 # Callables that start work on a thread or process the request did not create.
 # Spelled as the attribute or bare name actually called, so `asyncio.to_thread`,
 # a bare `to_thread` from a direct import, and an aliased import all resolve.
-DISPATCH_NAMES = {
-    "to_thread": "asyncio.to_thread",
-    "run_in_executor": "loop.run_in_executor",
-    "Thread": "threading.Thread",
-    "ThreadPoolExecutor": "ThreadPoolExecutor",
-    "ProcessPoolExecutor": "ProcessPoolExecutor",
-    "sync_to_async": "sync_to_async",
-}
+DISPATCH_CALL_NAMES = frozenset(
+    {
+        "to_thread",
+        "run_in_executor",
+        "Thread",
+        "ThreadPoolExecutor",
+        "ProcessPoolExecutor",
+        "sync_to_async",
+    }
+)
 
 # Modules whose names, however they are aliased on import, are dispatch
 # primitives. `async_to_sync` is deliberately absent: the view layer uses it to
@@ -69,10 +71,9 @@ LABEL = "undeclared off-thread dispatch"
 
 # Fallback for a file that does not parse. Deliberately not merged into the
 # syntax-tree result; see the module docstring.
-FALLBACK_PATTERNS = (
-    (LABEL, re.compile(r"\b(?:to_thread|run_in_executor)\s*\(")),
-    (LABEL, re.compile(r"\b(?:Thread|ThreadPoolExecutor|ProcessPoolExecutor)\s*\(")),
-    (LABEL, re.compile(r"\bsync_to_async\s*\(")),
+FALLBACK_PATTERN = re.compile(
+    r"\b(?:to_thread|run_in_executor|Thread|ThreadPoolExecutor"
+    r"|ProcessPoolExecutor|sync_to_async)\s*\("
 )
 
 
@@ -101,9 +102,9 @@ class _DispatchVisitor(ast.NodeVisitor):
     """
 
     def __init__(self) -> None:
-        """Seed the hit list and the alias map."""
-        self.hits: List[Tuple[str, int]] = []
-        self._aliases: Dict[str, str] = {}
+        """Seed the hit list and the set of local aliases."""
+        self.hits: List[int] = []
+        self._aliases: Set[str] = set()
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Record any alias that renames a dispatch primitive.
@@ -113,8 +114,8 @@ class _DispatchVisitor(ast.NodeVisitor):
         """
         if node.module in DISPATCH_SOURCE_MODULES:
             for alias in node.names:
-                if alias.name in DISPATCH_NAMES and alias.asname:
-                    self._aliases[alias.asname] = alias.name
+                if alias.name in DISPATCH_CALL_NAMES and alias.asname:
+                    self._aliases.add(alias.asname)
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -123,10 +124,23 @@ class _DispatchVisitor(ast.NodeVisitor):
         Args:
             node: The call expression.
         """
-        name = self._callee_name(node.func)
-        if name is not None and (name in DISPATCH_NAMES or name in self._aliases):
-            self.hits.append((LABEL, getattr(node, "lineno", 1)))
+        if self._is_dispatch(self._callee_name(node.func)):
+            self.hits.append(node.lineno)
         self.generic_visit(node)
+
+    def _is_dispatch(self, name: Optional[str]) -> bool:
+        """Report whether a callee name is a dispatch primitive here.
+
+        Args:
+            name: The name being called, or None when it is not a plain name
+                or attribute.
+
+        Returns:
+            True when the name is a dispatch primitive or a local alias of one.
+        """
+        return name is not None and (
+            name in DISPATCH_CALL_NAMES or name in self._aliases
+        )
 
     @staticmethod
     def _callee_name(func: ast.expr) -> Optional[str]:
@@ -145,15 +159,17 @@ class _DispatchVisitor(ast.NodeVisitor):
         return None
 
 
-def _scan_tree(text: str) -> Tuple[bool, List[Tuple[str, int]]]:
+def _scan_tree(text: str) -> Tuple[bool, List[int]]:
     """Scan source through its syntax tree.
 
     Args:
         text: The source to scan.
 
     Returns:
-        A ``(parsed, hits)`` pair. ``parsed`` is False when no form of the
-        source parses, which is the only case the line patterns cover.
+        A ``(parsed, lines)`` pair. ``parsed`` is False when no form of the
+        source parses, which is the only case the line pattern covers. The
+        ``dedent`` retry is there so a single indented snippet, as the pattern
+        tests below pass, still parses.
     """
     for candidate in (text, dedent(text)):
         try:
@@ -166,34 +182,31 @@ def _scan_tree(text: str) -> Tuple[bool, List[Tuple[str, int]]]:
     return False, []
 
 
-def _scan_source(text: str) -> List[Tuple[str, int, str]]:
+def _scan_source(text: str) -> List[Tuple[int, str]]:
     """Report every undeclared dispatch in some source text.
 
     Args:
         text: The source to scan.
 
     Returns:
-        A list of ``(what, lineno, line)`` tuples ordered by line number.
-        Empty when the source declares every dispatch it makes.
+        A list of ``(lineno, line)`` pairs, one per offending line, ordered by
+        line number. Empty when the source declares every dispatch it makes.
     """
     lines = text.splitlines()
     parsed, hits = _scan_tree(text)
     if not parsed:
         hits = [
-            (what, lineno)
+            lineno
             for lineno, line in enumerate(lines, start=1)
-            for what, pattern in FALLBACK_PATTERNS
-            if pattern.search(line)
+            if FALLBACK_PATTERN.search(line)
         ]
-    found: List[Tuple[str, int, str]] = []
-    for what, lineno in hits:
-        line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
-        if (what, lineno, line) not in found:
-            found.append((what, lineno, line))
-    return sorted(found, key=lambda hit: (hit[1], hit[0]))
+    return [
+        (lineno, lines[lineno - 1] if 0 < lineno <= len(lines) else "")
+        for lineno in sorted(set(hits))
+    ]
 
 
-def _scan_file(path: Path) -> List[Tuple[str, int, str]]:
+def _scan_file(path: Path) -> List[Tuple[int, str]]:
     """Scan one file for undeclared dispatches.
 
     Args:
@@ -215,8 +228,8 @@ class NoUndeclaredDispatchTests(SimpleTestCase):
             if _is_excluded(path):
                 continue
             relative = path.relative_to(APP_ROOT)
-            for what, lineno, line in _scan_file(path):
-                offenders.append(f"  {relative}:{lineno}: {what}: {line.strip()}")
+            for lineno, line in _scan_file(path):
+                offenders.append(f"  {relative}:{lineno}: {LABEL}: {line.strip()}")
 
         self.assertFalse(
             offenders,
