@@ -141,8 +141,9 @@ class TransformerClassifier(BaseClassifier):
 
     async def classify(self, spectrum: Any) -> dict:
         """Async wrapper that runs the synchronous CPU-bound classify in a thread."""
-        import asyncio
-        return await asyncio.to_thread(self.classify_sync, spectrum)
+        from astrodash.infrastructure.db_threads import run_non_db_work
+
+        return await run_non_db_work(self.classify_sync, spectrum)
 
     def load_model_from_state_dict(self, state_dict, model_config: Dict[str, Any]):
         """
