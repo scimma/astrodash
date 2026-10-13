@@ -1483,3 +1483,131 @@ class WorkerThreadConnectionTests(TransactionTestCase):
             observed["wrapper"].connection,
             "the worker thread's connection outlived the work that opened it",
         )
+
+
+class CallSiteConnectionTests(TransactionTestCase):
+    """A by-name lookup closes the connections its dispatches open.
+
+    ``WorkerThreadConnectionTests`` above pins the seam's own contract by
+    calling an entry point directly. That cannot catch a call site that stops
+    using the seam, which is the way this defect would come back: the seam
+    would still be correct and the leak would be somewhere else. So this case
+    drives the real service over the real repositories, exactly as the
+    interactive classify view does, and observes every dispatched call.
+
+    The observation has to be made inside the dispatched thread, because
+    ``connections`` is keyed per thread and the wrapper the test thread sees is
+    never the one the dispatched work used. The recording repositories below
+    capture their own thread's wrapper as the service calls them, and the test
+    inspects those captured wrappers afterwards. Holding a reference to each
+    wrapper also keeps the cycle collector from closing it nondeterministically
+    and flattering the result.
+    """
+
+    def setUp(self) -> None:
+        """Start from an empty cache so the lookup really resolves."""
+        cache.clear()
+        self.calls: List[Dict[str, Any]] = []
+
+    def _record(self, name: str) -> None:
+        """Capture the calling thread and its connection wrapper.
+
+        Args:
+            name: The repository method being recorded.
+        """
+        self.calls.append(
+            {
+                "name": name,
+                "thread": threading.current_thread(),
+                "wrapper": connections["default"],
+            }
+        )
+
+    def _repositories(self):
+        """Build repositories that record each call the service dispatches.
+
+        Returns:
+            A ``(spectrum_repo, candidate_set_repo)`` pair over the real
+            Django repositories.
+        """
+        record = self._record
+
+        class RecordingSpectrumRepo(DjangoSpectrumRepository):
+            """The real retained-spectrum store, with a call log."""
+
+            def save(self, spectrum_to_save: Spectrum) -> Spectrum:
+                """Save, recording where the save ran.
+
+                Args:
+                    spectrum_to_save: The spectrum being retained.
+
+                Returns:
+                    Whatever the real repository returns.
+                """
+                saved = super().save(spectrum_to_save)
+                record("spectrum.save")
+                return saved
+
+            def get_by_designation_and_spectrum_id(
+                self, designation: str, spectrum_id: str
+            ) -> Optional[Spectrum]:
+                """Read retention, recording where the read ran.
+
+                Args:
+                    designation: The object designation looked up.
+                    spectrum_id: The upstream spectrum identifier.
+
+                Returns:
+                    Whatever the real repository returns.
+                """
+                found = super().get_by_designation_and_spectrum_id(
+                    designation, spectrum_id
+                )
+                record("spectrum.get_by_designation_and_spectrum_id")
+                return found
+
+        class RecordingCandidateSetRepo(DjangoCandidateSetRepository):
+            """The real candidate-set store, with a call log."""
+
+            def get(self, normalized_name: str) -> Optional[Dict[str, Any]]:
+                """Read the stored set, recording where the read ran.
+
+                Args:
+                    normalized_name: The normalized designation.
+
+                Returns:
+                    Whatever the real repository returns.
+                """
+                found = super().get(normalized_name)
+                record("candidate_set.get")
+                return found
+
+        return RecordingSpectrumRepo(), RecordingCandidateSetRepo()
+
+    def test_a_lookup_leaves_no_connection_open_on_its_threads(self) -> None:
+        """Every dispatched storage call closes its own thread's connection."""
+        spectrum_repo, candidate_set_repo = self._repositories()
+        service = SpectrumService(
+            file_repo=None,
+            wiserep_repo=StubWiserepRepo(spectrum()),
+            db_repo=spectrum_repo,
+            candidate_set_repo=candidate_set_repo,
+            wiserep_client=StubClient(),
+            settings=mock.Mock(),
+        )
+
+        lookup(service)
+
+        self.assertTrue(self.calls, "the lookup dispatched no storage work")
+        caller = threading.current_thread()
+        for call in self.calls:
+            with self.subTest(call=call["name"]):
+                self.assertIsNot(
+                    call["thread"],
+                    caller,
+                    f"{call['name']} ran in the caller's thread, not a dispatched one",
+                )
+                self.assertIsNone(
+                    call["wrapper"].connection,
+                    f"the connection {call['name']} opened outlived the lookup",
+                )
