@@ -197,26 +197,3 @@ def sort_wave_flux(wave: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, np.n
         flux = flux[::-1]
     order = np.argsort(wave, kind="mergesort")
     return wave[order], flux[order]
-
-def construct_osc_reference(sn_name: str) -> str:
-    """
-    Construct OSC reference from SN name.
-
-    Args:
-        sn_name: Supernova name (e.g., 'sn2002er', '2002er')
-
-    Returns:
-        OSC reference (e.g., 'osc-sn2002er-0')
-    """
-    clean_name = sn_name.strip()
-
-    # If it already starts with "osc-", return as is
-    if clean_name.startswith('osc-'):
-        return clean_name
-
-    # If it starts with "sn", construct the full OSC reference
-    if clean_name.lower().startswith('sn'):
-        return f"osc-{clean_name}-0"
-
-    # If it doesn't start with "sn", assume it's a SN name and add "sn" prefix
-    return f"osc-sn{clean_name}-0"

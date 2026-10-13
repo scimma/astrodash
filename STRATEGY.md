@@ -34,6 +34,11 @@ the latest ML models.
   rolling 7-day window
 - **Single-spectrum completion rate** — fraction of upload attempts that
   produce a classification the user accepts
+- **By-name completion rate** - fraction of by-name lookup attempts that
+  produce a classification the user accepts. Tracked separately from the
+  single-spectrum completion rate, whose denominator stays upload attempts, so
+  the two series remain comparable and show whether starting from a
+  designation converts better than starting from a file
 - **Time from upload to result** — median seconds from upload submission to
   a returned classification for a single spectrum
 - **Returning astronomers** — fraction of weekly actives who were also active

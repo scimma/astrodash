@@ -39,7 +39,6 @@ import argparse
 import csv
 import hashlib
 import html as html_lib
-import io
 import json
 import re
 import struct
@@ -48,28 +47,34 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
-import zipfile
 
 import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# The export parsing and the client identity live in the application package so
+# that the request path and this offline tool read one implementation. Nothing
+# in the request path imports this module, so the dependency runs this way
+# round. Run as a script, this file's directory is on ``sys.path`` and the
+# application package's parent is not, so put it there.
+APP_DIR = Path(__file__).resolve().parent.parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+from astrodash.infrastructure.wiserep.parsing import (  # noqa: E402
+    USER_AGENT,
+    compact,
+    extract_csv_text_from_zip,
+    find_column,
+    normalize_col,
+    parse_csv_rows,
+)
+
 
 BASE_URL = "https://www.wiserep.org"
 SEARCH_URL = f"{BASE_URL}/search/spectra"
-
-# Identify the client plainly. No API key or login is needed for the public
-# pages this reads.
-#
-# An earlier revision sent a TNS-style marker with "tns_id":0. TNS issues real
-# bot ids on registration and WISeREP is operated by the same group, so a
-# marker carrying a placeholder id claims a registration that does not exist.
-# If AstroDASH registers a bot id, set it through --user-agent rather than
-# reinstating the literal below.
-USER_AGENT = "AstroDASH-WISeREP-Ingest/1.0 (+https://astrodash.scimma.org)"
 
 METADATA_COLUMNS = ["iau", "filename", "type", "redshift"]
 
@@ -218,16 +223,6 @@ def request(
     return response
 
 
-def compact(text: object) -> str:
-    if text is None:
-        return ""
-    return re.sub(r"\s+", " ", str(text)).strip()
-
-
-def normalize_col(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", compact(name).lower())
-
-
 def normalize_iau(value: str) -> str:
     value = compact(value)
     value = re.sub(r"^SN\s+", "", value, flags=re.IGNORECASE)
@@ -275,70 +270,10 @@ def normalize_redshift(value: object) -> str:
     return format(z, ".12g")
 
 
-def find_column(
-    fieldnames: Iterable[str],
-    preferred: Iterable[str],
-    contains: Iterable[str] = (),
-) -> str | None:
-    fields = list(fieldnames)
-    normalized = {normalize_col(f): f for f in fields}
-
-    for alias in preferred:
-        key = normalize_col(alias)
-        if key in normalized:
-            return normalized[key]
-
-    contains_norm = [normalize_col(x) for x in contains]
-    for f in fields:
-        nf = normalize_col(f)
-        if all(token in nf for token in contains_norm):
-            return f
-    return None
-
-
-def clean_csv_text(text: str) -> str:
-    # Strip UTF-8 BOM and leading blank lines that occasionally confuse DictReader.
-    return text.lstrip("\ufeff\r\n ")
-
-
-def parse_csv_rows(text: str) -> list[dict[str, str]]:
-    cleaned = clean_csv_text(text)
-    if not cleaned:
-        return []
-
-    reader = csv.DictReader(io.StringIO(cleaned, newline=""))
-    if not reader.fieldnames:
-        return []
-
-    return [
-        {compact(k): compact(v) for k, v in row.items() if k is not None}
-        for row in reader
-    ]
-
-
 def is_zip_payload(content: bytes, content_type: str = "") -> bool:
     if content.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
         return True
     return "zip" in compact(content_type).lower()
-
-
-def extract_csv_text_from_zip(content: bytes) -> str:
-    with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        names = archive.namelist()
-        csv_names = [name for name in names if name.lower().endswith(".csv")]
-        if not csv_names:
-            raise RuntimeError(
-                f"WISeREP zip export contained no CSV file (members={names})"
-            )
-        preferred = next(
-            (
-                name
-                for name in csv_names
-                if Path(name).name.lower() == "wiserep_spectra.csv"
-            ),
-            csv_names[0],
-        )
-        return archive.read(preferred).decode("utf-8-sig")
 
 
 def table_header_row(table):

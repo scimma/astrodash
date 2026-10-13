@@ -12,7 +12,10 @@ from astrodash.infrastructure.database.sqlalchemy_spectrum_repository import SQL
 from astrodash.infrastructure.database.sqlalchemy_model_repository import SQLAlchemyModelRepository
 
 # Storage imports
-from astrodash.infrastructure.storage.file_spectrum_repository import FileSpectrumRepository, OSCSpectrumRepository
+from astrodash.infrastructure.storage.file_spectrum_repository import FileSpectrumRepository
+from astrodash.infrastructure.storage.wiserep_spectrum_repository import (
+    WiserepSpectrumRepository,
+)
 
 # ML imports
 from astrodash.infrastructure.ml.model_factory import ModelFactory
@@ -39,9 +42,11 @@ def get_file_spectrum_repo(settings: Settings = Depends(get_app_settings)) -> Fi
     """Dependency to get file-based spectrum repository."""
     return FileSpectrumRepository(config=settings)
 
-def get_osc_spectrum_repo(settings: Settings = Depends(get_app_settings)) -> OSCSpectrumRepository:
-    """Dependency to get OSC spectrum repository."""
-    return OSCSpectrumRepository(config=settings)
+def get_wiserep_spectrum_repo(
+    settings: Settings = Depends(get_app_settings),
+) -> WiserepSpectrumRepository:
+    """Dependency to get the WISeREP spectrum repository."""
+    return WiserepSpectrumRepository(settings=settings)
 
 # Model factory dependency
 def get_model_factory(settings: Settings = Depends(get_app_settings)) -> ModelFactory:
@@ -104,13 +109,18 @@ def get_redshift_service(
 
 def get_spectrum_service(
     file_repo = Depends(get_file_spectrum_repo),
-    osc_repo = Depends(get_osc_spectrum_repo),
+    wiserep_repo=Depends(get_wiserep_spectrum_repo),
     db_repo = Depends(get_sqlalchemy_spectrum_repository),
     settings = Depends(get_app_settings)
 ):
     """Dependency to get spectrum service."""
     from astrodash.domain.services.spectrum_service import SpectrumService
-    return SpectrumService(file_repo, osc_repo, db_repo, settings)
+    return SpectrumService(
+        file_repo=file_repo,
+        wiserep_repo=wiserep_repo,
+        db_repo=db_repo,
+        settings=settings,
+    )
 
 def get_batch_processing_service(
     spectrum_service = Depends(get_spectrum_service),

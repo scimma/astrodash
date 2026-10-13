@@ -18,6 +18,7 @@ from astrodash.forms import (
     BatchForm,
     ModelSelectionForm,
     REDSHIFT_REQUIRED_MESSAGE,
+    candidate_records_for_name,
     redshift_input_policy,
     takes_redshift_input,
 )
@@ -54,7 +55,16 @@ from astrodash.services import (
     get_template_analysis_service,
     get_twins_search_service,
 )
-from astrodash.core.exceptions import AppException
+from astrodash.core.exceptions import (
+    AmbiguousDesignationException,
+    AppException,
+    IncompleteSourceExportException,
+    NoEligibleSpectrumException,
+)
+from astrodash.infrastructure.storage.wiserep_spectrum_repository import (
+    WiserepUnusableSpectrumError,
+)
+from astrodash.infrastructure.wiserep.client import WiserepUnreachableError
 from astrodash.shared.utils.helpers import sanitize_for_json
 from astrodash.config.logging import get_logger
 from asgiref.sync import async_to_sync
@@ -552,7 +562,246 @@ def model_selection(request):
     return render(request, 'astrodash/model_selection.html', context)
 
 
-def _build_classify_form(effective_model, data=None, files=None, initial=None):
+def _preserved_classify_fields(
+    model_value: str, supernova_name: str, params: dict
+) -> list:
+    """Hidden fields that carry a by-name resubmission's other settings.
+
+    The epoch control and the ambiguity choices each submit their own form, so
+    the settings the researcher already chose travel with them rather than
+    reverting to the form defaults.
+
+    Args:
+        model_value: The value the form's model field must carry to validate.
+        supernova_name: The designation the resubmission is for.
+        params: The parameters the last classification ran with.
+
+    Returns:
+        A list of ``(field name, value)`` pairs to render as hidden inputs.
+        ``known_z`` appears only when it is set and ``redshift`` only when one
+        is held, so an unknown redshift is resubmitted as unknown rather than
+        as zero (R11).
+    """
+    fields = [
+        ("model", model_value),
+        ("supernova_name", supernova_name),
+        ("smoothing", params.get("smoothing")),
+        ("min_wave", params.get("minWave")),
+        ("max_wave", params.get("maxWave")),
+    ]
+    if params.get("knownZ"):
+        fields.append(("known_z", "on"))
+    if params.get("zValue") is not None:
+        fields.append(("redshift", params.get("zValue")))
+    return fields
+
+
+def _format_retrieved_at(retrieved_at) -> str:
+    """Render a retrieval time for the result line and the session.
+
+    Args:
+        retrieved_at: The time the spectrum was retrieved, or ``None``.
+
+    Returns:
+        The time as text, empty when none was recorded or when the value is
+        not a time at all. Text rather than a datetime because the result line
+        is held in the session between the classification and an overlay
+        re-render, and the session is JSON-encoded -- so, as with the source
+        identifiers, only a value that really is a string leaves here.
+    """
+    if isinstance(retrieved_at, str):
+        return retrieved_at.strip()
+    if retrieved_at is None:
+        return ""
+    try:
+        formatted = retrieved_at.strftime("%Y-%m-%d %H:%M:%S %Z")
+    except AttributeError:
+        return ""
+    return formatted.strip() if isinstance(formatted, str) else ""
+
+
+def _source_redshift(spectrum):
+    """Return a spectrum's redshift, but only when it is a real number.
+
+    The value reaches ``params["zValue"]``, which is both handed to processing
+    and signed into the session, so a non-numeric value fails the response
+    rather than this call. ``is not None`` is not enough of a check: anything
+    stand-in-shaped passes it. ``bool`` is excluded deliberately -- it is an
+    ``int`` subclass, and a numpy bool reaching a session write is a break this
+    project has already had.
+
+    Args:
+        spectrum: The spectrum the lookup produced.
+
+    Returns:
+        The redshift as a number, or None when the source records none.
+    """
+    redshift = getattr(spectrum, "redshift", None)
+    if isinstance(redshift, bool) or not isinstance(redshift, (int, float)):
+        return None
+    return redshift
+
+
+def _attributed_source_redshift(session):
+    """Return the redshift the last by-name classification took from the source.
+
+    The redshift field comes back filled in with whatever the previous lookup
+    put there, so a field still holding that value has not been edited -- it
+    belongs to the object or the epoch that was classified before, not to the
+    researcher. Both halves are read back out of what that classification
+    already wrote: the provenance entry says the value was the source's, and
+    ``classify_last_params`` holds the value itself. Nothing new is written to
+    the session here, and the same type check as ``_source_redshift`` applies on
+    the way back out, because a session is only as trustworthy as what encoded
+    into it.
+
+    Args:
+        session: The request's session.
+
+    Returns:
+        The redshift the previous classification attributed to the source, or
+        None when the previous classification was not by name, took its
+        redshift from the researcher, or recorded no usable number.
+    """
+    held = session.get("classify_spectrum_provenance")
+    if not isinstance(held, dict) or not held.get("redshift_from_source"):
+        return None
+    last_params = session.get("classify_last_params")
+    if not isinstance(last_params, dict):
+        return None
+    redshift = last_params.get("redshift")
+    if isinstance(redshift, bool) or not isinstance(redshift, (int, float)):
+        return None
+    return redshift
+
+
+def _offered_source_redshift(session):
+    """Return the redshift the source held at the last by-name classification.
+
+    Distinct from ``_attributed_source_redshift``, which reports what was
+    *used*: this reports what was *available*. It is the evidence that the page
+    the current submission came from had already shown the researcher a source
+    redshift -- so a redshift box that comes back empty, or a Known Redshift box
+    that comes back unchecked, is an opt-out rather than a first lookup that has
+    not been offered anything yet. It survives the opt-out itself, which is what
+    makes the opt-out stick instead of springing back on the next submit.
+
+    The same type check as ``_source_redshift`` applies on the way back out: the
+    value round-trips through a JSON-encoded session, and a session is only as
+    trustworthy as what encoded into it.
+
+    Args:
+        session: The request's session.
+
+    Returns:
+        The redshift the source recorded for the last by-name classification,
+        or None when the previous classification was not by name or the source
+        recorded no usable number.
+    """
+    held = session.get("classify_spectrum_provenance")
+    if not isinstance(held, dict):
+        return None
+    redshift = held.get("source_redshift")
+    if isinstance(redshift, bool) or not isinstance(redshift, (int, float)):
+        return None
+    return redshift
+
+
+def _source_spectrum_id(spectrum) -> str:
+    """Return a spectrum's source identifier, but only when it is a real string.
+
+    Both the result line and ``classify_last_params`` are signed into the
+    session after the view has already succeeded, so a value that cannot be
+    JSON-encoded fails the response rather than the call that produced it --
+    the same shape of break a numpy bool caused once before. Truthiness is not
+    enough of a check: anything stand-in-shaped is truthy and survives an
+    ``or ""`` fallback. A spectrum whose identifier is not a string did not come
+    from a by-name lookup and has nothing to carry.
+
+    Args:
+        spectrum: The spectrum the lookup or upload produced.
+
+    Returns:
+        The source spectrum identifier, or an empty string when there is none.
+    """
+    spectrum_id = getattr(spectrum, "source_spectrum_id", None)
+    return spectrum_id if isinstance(spectrum_id, str) else ""
+
+
+def _spectrum_provenance(spectrum, records: list, requested_id) -> dict:
+    """Describe the spectrum a by-name lookup served.
+
+    Args:
+        spectrum: The spectrum the lookup returned.
+        records: The candidate records resolved for the designation, which
+            carry the observation date, instrument and quality the result line
+            reads (R7).
+        requested_id: The epoch identifier the researcher chose, or ``None``
+            when the automatic selection stood.
+
+    Returns:
+        A mapping for the result line, or an empty mapping when the spectrum
+        carries no source identity -- an upload, for instance.
+    """
+    spectrum_id = _source_spectrum_id(spectrum)
+    if not spectrum_id:
+        return {}
+    designation = getattr(spectrum, "object_designation", "")
+    if not isinstance(designation, str):
+        designation = ""
+    record = next(
+        (
+            item
+            for item in records
+            if str(item.get("source_spectrum_id")) == str(spectrum_id)
+        ),
+        {},
+    )
+    chosen = bool(requested_id) and str(requested_id) == str(spectrum_id)
+    return {
+        "designation": designation,
+        "source_spectrum_id": spectrum_id,
+        "observation_date": (record.get("observation_date") or "").strip(),
+        "instrument": (record.get("instrument") or "").strip(),
+        "quality": (record.get("quality") or "").strip(),
+        "retrieved_at": _format_retrieved_at(getattr(spectrum, "retrieved_at", None)),
+        "selection_basis": (
+            "the epoch you chose" if chosen else "the earliest eligible observation"
+        ),
+    }
+
+
+def _by_name_refusal(error: AppException) -> dict:
+    """Classify a by-name failure for the lookup report.
+
+    Each condition the lookup refuses on reports distinctly (R17): the kind
+    decides what the page offers alongside the message -- the matching objects
+    for an ambiguous designation, the other epochs for an unusable spectrum.
+
+    Args:
+        error: The failure the lookup raised.
+
+    Returns:
+        A mapping of ``kind`` and ``message``.
+    """
+    if isinstance(error, AmbiguousDesignationException):
+        kind = "ambiguous"
+    elif isinstance(error, WiserepUnusableSpectrumError):
+        kind = "unusable"
+    elif isinstance(error, NoEligibleSpectrumException):
+        kind = "no_eligible"
+    elif isinstance(error, IncompleteSourceExportException):
+        kind = "incomplete"
+    elif isinstance(error, WiserepUnreachableError):
+        kind = "unreachable"
+    else:
+        kind = "other"
+    return {"kind": kind, "message": error.message}
+
+
+def _build_classify_form(
+    effective_model, data=None, files=None, initial=None, object_name=None
+):
     """Build the classification form bound to the model that will actually run.
 
     The effective model drives both the form's choices and its redshift policy
@@ -566,12 +815,20 @@ def _build_classify_form(effective_model, data=None, files=None, initial=None):
         data: Bound POST data, or ``None`` for an unbound form.
         files: Bound files, or ``None``.
         initial: Initial field values, or ``None``.
+        object_name: The designation whose eligible spectra the epoch control
+            offers, or ``None`` when none is in play.
 
     Returns:
         ClassifyForm: The form, with the user-uploaded entry hidden from the
         dropdown unless it is what was selected (it travels as a hidden input).
     """
-    form = ClassifyForm(data, files, initial=initial, effective_model=effective_model)
+    form = ClassifyForm(
+        data,
+        files,
+        initial=initial,
+        effective_model=effective_model,
+        object_name=object_name,
+    )
     if effective_model != 'user_uploaded':
         form.fields['model'].choices = [
             c for c in form.fields['model'].choices if c[0] != 'user_uploaded'
@@ -615,6 +872,7 @@ def classify(request):
 
     form_files = request.FILES or None
     injected_cached_file = False
+    posted_supernova_name = ""
     if request.method == 'POST':
         posted_supernova_name = (request.POST.get('supernova_name') or '').strip()
         posted_file = request.FILES.get('file')
@@ -636,7 +894,12 @@ def classify(request):
                 # If cached file restore fails, continue with original request files.
                 form_files = request.FILES or None
 
-    form = _build_classify_form(selected_model_type, request.POST or None, form_files)
+    form = _build_classify_form(
+        selected_model_type,
+        request.POST or None,
+        form_files,
+        object_name=posted_supernova_name or None,
+    )
     # Display label for "Model Used" when a user model is selected
     selected_model_display = None
     if selected_model_type == 'user_uploaded' and selected_model_id:
@@ -654,6 +917,11 @@ def classify(request):
         scoped_model_display = (
             scoped_definition.title if scoped_definition else scoped_model_type
         )
+    # The value a by-name resubmission must put in the model field for the
+    # form to validate. The view takes the model it runs from the scope or the
+    # session regardless, so this only has to be a choice the form accepts.
+    classify_model_field_value = scoped_model_type or selected_model_type
+
     # Result surfaces (the tab strip and its panes) come from the *selected*
     # model's declared list per KTD5, so a fresh page load already shows every
     # tab the chosen model offers, before any classification has run.
@@ -671,6 +939,15 @@ def classify(request):
         # a model that declines it renders neither redshift control.
         'show_redshift_controls': takes_redshift_input(selected_model_type),
         'persisted_file_name': (request.session.get('classify_uploaded_file') or {}).get('name'),
+        # The by-name lookup report: the selected spectrum, the epoch control
+        # and any refusal. Empty until a by-name lookup has run.
+        "spectrum_provenance": {},
+        "redshift_from_source": False,
+        "lookup_refusal": None,
+        "ambiguous_choices": [],
+        "show_epoch_control": False,
+        "preserved_fields": [],
+        "by_name_submitted": False,
     }
 
     # Fresh page entry should not keep a previously persisted file/params.
@@ -684,6 +961,7 @@ def classify(request):
             request.session.pop('classify_uploaded_file', None)
             request.session.pop('classify_last_params', None)
             request.session.pop('classify_input_source_key', None)
+            request.session.pop("classify_spectrum_provenance", None)
             context['persisted_file_name'] = None
 
     # GET with overlay params: re-render plot from session with new overlays (no re-classification)
@@ -751,7 +1029,28 @@ def classify(request):
                 last_params = request.session.get('classify_last_params') or {}
                 if last_params:
                     context['form'] = _build_classify_form(
-                        selected_model_type, initial=last_params
+                        selected_model_type,
+                        initial=last_params,
+                        object_name=last_params.get("supernova_name") or None,
+                    )
+                # An overlay re-render classifies nothing, so the result line
+                # and the epoch control come back from the session rather than
+                # from a fresh lookup -- the researcher sees the same spectrum
+                # named on every render of that result.
+                held = request.session.get("classify_spectrum_provenance") or {}
+                if held:
+                    epoch_records = candidate_records_for_name(
+                        last_params.get("supernova_name")
+                    )
+                    context.update(
+                        {
+                            "spectrum_provenance": held.get("provenance") or {},
+                            "redshift_from_source": bool(
+                                held.get("redshift_from_source")
+                            ),
+                            "show_epoch_control": len(epoch_records) > 1,
+                            "preserved_fields": held.get("preserved_fields") or [],
+                        }
                     )
                 return render(request, 'astrodash/classify.html', context)
             # Fall through to normal render if no overlays or restore failed
@@ -809,6 +1108,21 @@ def classify(request):
                         'source_key': current_source_key,
                     }
 
+            # Which epoch to classify, and whether this is a by-name lookup at
+            # all: a submission carrying both a file and a name prefers the
+            # file, exactly as the seam does.
+            by_name_lookup = bool(supernova_name) and not uploaded_file
+            chosen_epoch_id = (
+                form.cleaned_data.get("source_spectrum_id") or None
+                if by_name_lookup
+                else None
+            )
+            redshift_from_source = False
+            # What the source held for this spectrum, used or not; recorded in
+            # the session so the next submission can tell an opt-out from a
+            # first lookup.
+            source_redshift = None
+
             previous_source_key = request.session.get('classify_input_source_key')
             source_changed = bool(
                 previous_source_key and current_source_key and current_source_key != previous_source_key)
@@ -823,11 +1137,83 @@ def classify(request):
                 classification_service = get_classification_service()
 
                 # 1. Read Spectrum
-                # If file is provided, use it. Otherwise use supernova_name (osc_ref)
+                # If file is provided, use it. Otherwise use supernova_name
                 spectrum = async_to_sync(spectrum_service.get_spectrum_data)(
                     file=uploaded_file,
-                    osc_ref=supernova_name
+                    object_name=supernova_name,
+                    source_spectrum_id=chosen_epoch_id,
                 )
+
+                if by_name_lookup:
+                    # The source's redshift populates the field and sets the
+                    # known-redshift flag (R9), and keeps doing so across an
+                    # epoch switch while the researcher has not edited it
+                    # (R10). A value they typed instead is theirs: it is used
+                    # as submitted and no longer attributed to the source.
+                    source_redshift = _source_redshift(spectrum)
+                    submitted_redshift = form.cleaned_data.get("redshift")
+                    # What the field carries is only the researcher's when they
+                    # put it there. A new designation makes everything in the
+                    # form stale (the other settings were reset above for the
+                    # same reason), and a field still holding the value the last
+                    # lookup filled in is the previous object's or the previous
+                    # epoch's -- neither may stand in for this spectrum's.
+                    attributed_redshift = _attributed_source_redshift(request.session)
+                    unedited = (
+                        source_changed
+                        or submitted_redshift is None
+                        or submitted_redshift == source_redshift
+                        or (
+                            attributed_redshift is not None
+                            and submitted_redshift == attributed_redshift
+                        )
+                    )
+                    # Auto-filled, labelled, overridable -- and clearing the
+                    # field or unchecking Known Redshift is one of the ways to
+                    # override it (R10). The label has already disclosed where
+                    # the value came from, so a researcher who removes it is
+                    # making an informed choice and it is not written back over
+                    # them. The opt-out is only legible against a page that had
+                    # already been offered the source's value: a first lookup
+                    # submits the same empty box and unchecked box, and must
+                    # still be filled in (R9). A new designation resets the form
+                    # (above), so nothing is read back across one.
+                    opted_out = (
+                        not source_changed
+                        and _offered_source_redshift(request.session) is not None
+                        and form.redshift_controls_submitted
+                        and (form.redshift_cleared or form.known_redshift_unchecked)
+                    )
+                    if opted_out:
+                        params["zValue"] = None
+                        params["knownZ"] = False
+                        logger.info(
+                            "Classifying %s without a redshift: the source's "
+                            "value was declined on this submission",
+                            supernova_name,
+                        )
+                    elif source_redshift is not None and unedited:
+                        params["zValue"] = source_redshift
+                        params["knownZ"] = True
+                        redshift_from_source = True
+                    # The form left this gate to run here, after resolution,
+                    # so the field is judged against the resolved redshift
+                    # rather than the empty submitted one. Nothing substitutes
+                    # zero for a redshift the source does not record (R11).
+                    if form.redshift_required_deferred and params["zValue"] is None:
+                        form.add_error("redshift", REDSHIFT_REQUIRED_MESSAGE)
+                        # The report region is where focus lands after a by-name
+                        # submit and what the live region announces, so the
+                        # refusal is reported there as well as on the field it
+                        # is about. Without it focus arrives on an empty region
+                        # and the only message sits in the sidebar form, out of
+                        # the way of anyone who cannot see the whole page.
+                        context["lookup_refusal"] = {
+                            "kind": "redshift_required",
+                            "message": REDSHIFT_REQUIRED_MESSAGE,
+                        }
+                        context["by_name_submitted"] = True
+                        return render(request, "astrodash/classify.html", context)
 
                 # 2. Process Spectrum
                 processed = async_to_sync(processing_service.process_spectrum_with_params)(
@@ -895,7 +1281,37 @@ def classify(request):
                     'max_wave': params['maxWave'],
                     'known_z': params['knownZ'],
                     'redshift': params['zValue'],
+                    "source_spectrum_id": _source_spectrum_id(spectrum),
                 }
+
+                epoch_records = (
+                    candidate_records_for_name(supernova_name) if by_name_lookup else []
+                )
+                provenance = (
+                    _spectrum_provenance(spectrum, epoch_records, chosen_epoch_id)
+                    if by_name_lookup
+                    else {}
+                )
+                preserved_fields = (
+                    _preserved_classify_fields(
+                        classify_model_field_value, supernova_name, params
+                    )
+                    if by_name_lookup
+                    else []
+                )
+                if provenance:
+                    request.session["classify_spectrum_provenance"] = {
+                        "provenance": provenance,
+                        "redshift_from_source": redshift_from_source,
+                        "source_redshift": (
+                            float(source_redshift)
+                            if source_redshift is not None
+                            else None
+                        ),
+                        "preserved_fields": preserved_fields,
+                    }
+                else:
+                    request.session.pop("classify_spectrum_provenance", None)
 
                 # Overlay state from POST (when user clicked Apply in Customize modal), else empty
                 overlay_elements = request.POST.getlist('overlay_elements') or []
@@ -950,7 +1366,36 @@ def classify(request):
                     'available_elements': available_elements,
                     'persisted_file_name': (request.session.get('classify_uploaded_file') or {}).get('name'),
                 })
-                if source_changed:
+                context.update(
+                    {
+                        "spectrum_provenance": provenance,
+                        "redshift_from_source": redshift_from_source,
+                        "show_epoch_control": len(epoch_records) > 1,
+                        "preserved_fields": preserved_fields,
+                        "by_name_submitted": by_name_lookup,
+                    }
+                )
+                if by_name_lookup:
+                    # Rebuilt rather than left bound: the candidate set was
+                    # stored by this very lookup, so only a form built after it
+                    # offers the other epochs, and the redshift field shows the
+                    # value the classification actually ran with.
+                    context["form"] = _build_classify_form(
+                        selected_model_type,
+                        initial={
+                            "supernova_name": supernova_name,
+                            "smoothing": params["smoothing"],
+                            "min_wave": params["minWave"],
+                            "max_wave": params["maxWave"],
+                            "known_z": params["knownZ"],
+                            "redshift": params["zValue"],
+                            "source_spectrum_id": provenance.get(
+                                "source_spectrum_id", ""
+                            ),
+                        },
+                        object_name=supernova_name,
+                    )
+                elif source_changed:
                     context['form'] = _build_classify_form(
                         selected_model_type,
                         initial=(
@@ -959,7 +1404,57 @@ def classify(request):
                     )
 
             except AppException as e:
-                messages.error(request, f"Processing Error: {e.message}")
+                if not by_name_lookup:
+                    messages.error(request, f"Processing Error: {e.message}")
+                else:
+                    refusal = _by_name_refusal(e)
+                    epoch_records = candidate_records_for_name(supernova_name)
+                    preserved_fields = _preserved_classify_fields(
+                        classify_model_field_value, supernova_name, params
+                    )
+                    context.update(
+                        {
+                            "lookup_refusal": refusal,
+                            "by_name_submitted": True,
+                            # The epoch control rides along with an unusable
+                            # spectrum (R21, AE20): resolution succeeded, so
+                            # the other epochs are known and one of them can
+                            # be classified without the designation being
+                            # re-entered.
+                            "show_epoch_control": len(epoch_records) > 1,
+                            "preserved_fields": preserved_fields,
+                        }
+                    )
+                    if refusal["kind"] == "ambiguous":
+                        # Nothing is classified and no further query is made to
+                        # render the choice: each listed object resubmits that
+                        # exact designation (R19).
+                        context["ambiguous_choices"] = [
+                            {
+                                "designation": item.get("designation", ""),
+                                "object_type": item.get("object_type") or "",
+                                "redshift": item.get("redshift"),
+                                "fields": _preserved_classify_fields(
+                                    classify_model_field_value,
+                                    item.get("designation", ""),
+                                    params,
+                                ),
+                            }
+                            for item in e.objects
+                        ]
+                    context["form"] = _build_classify_form(
+                        selected_model_type,
+                        initial={
+                            "supernova_name": supernova_name,
+                            "smoothing": params["smoothing"],
+                            "min_wave": params["minWave"],
+                            "max_wave": params["maxWave"],
+                            "known_z": params["knownZ"],
+                            "redshift": params["zValue"],
+                            "source_spectrum_id": chosen_epoch_id or "",
+                        },
+                        object_name=supernova_name,
+                    )
             except Exception as e:
                 messages.error(request, f"An unexpected error occurred: {str(e)}")
         else:

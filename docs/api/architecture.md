@@ -17,7 +17,7 @@ AstroDASH follows a clean, layered architecture for maintainability and testabil
 3. **Repositories and Storage**
 
    - Abstractions for spectrum and model persistence and retrieval
-   - File-based storage, Django ORM repositories, and OSC API client
+   - File-based storage, Django ORM repositories, and WISeREP client
    - Reside in `app/astrodash/domain/repositories/` and `app/astrodash/infrastructure/`
 
 4. **ML Infrastructure**
@@ -34,7 +34,7 @@ AstroDASH follows a clean, layered architecture for maintainability and testabil
 ## Request Flow (example: POST /astrodash/api/v1/process)
 
 1. Django URL router dispatches to the API view, which parses form data (`file`, `params`)
-2. `SpectrumService` obtains spectrum data (file or OSC)
+2. `SpectrumService` obtains spectrum data (file or object designation)
 3. `SpectrumProcessingService` applies filtering, smoothing, normalization, metadata
 4. `ClassificationService` selects the appropriate classifier (Dash, Transformer, 1D CNN, latent, or User) via `ModelFactory`
 5. ML classifier runs inference

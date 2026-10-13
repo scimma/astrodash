@@ -243,7 +243,7 @@
     "/process": {
       "post": {
         "summary": "Process Spectrum",
-        "description": "Classify a single supernova spectrum from a file upload or OSC reference.",
+        "description": "Classify a single supernova spectrum from a file upload or object designation.",
         "operationId": "processSpectrum",
         "requestBody": {
           "content": {
@@ -258,7 +258,7 @@
                   },
                   "params": {
                     "type": "string",
-                    "description": "JSON string with processing parameters. Must include modelType (one of the active built-in model ids: dash, transformer, 1dCNN_z, 1dCNN_noz, latent_z, latent_noz) unless model_id is supplied; also accepts oscRef and other processing fields. 1dCNN_z and latent_z require redshift; 1dCNN_noz and latent_noz do not take redshift as an input."
+                    "description": "JSON string with processing parameters. Must include modelType (one of the active built-in model ids: dash, transformer, 1dCNN_z, 1dCNN_noz, latent_z, latent_noz) unless model_id is supplied; also accepts objectName and other processing fields. 1dCNN_z and latent_z require redshift; 1dCNN_noz and latent_noz do not take redshift as an input."
                   },
                   "model_id": {
                     "type": "string",
@@ -280,10 +280,74 @@
             }
           },
           "400": {
-            "description": "Invalid file, or a modelType that is omitted (without model_id), unknown, or retired. modelType is validated against the model registry's active definitions."
+            "description": "Invalid file, or a modelType that is omitted (without model_id), unknown, or retired. modelType is validated against the model registry's active definitions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API write endpoints are disabled in this deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WritesDisabledError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The designation resolved against WISeREP, but nothing it holds is public, of the object itself, and classifiable, so no epoch was selected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The designation matches more than one WISeREP object. The request is refused rather than guessed, and the matching objects are returned so a caller can offer the choice.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AmbiguousDesignationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Neither a file nor objectName was supplied, params was malformed, or the selected WISeREP spectrum cannot be classified as fetched (unparseable payload, an off-host or non-https download URL, or too few points inside the usable window).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Processing error"
+            "description": "Processing error, or WISeREP could not be read within its bounds (connection failure, HTTP error status, per-request timeout, response over the byte cap, or elapsed time past a deadline).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "WISeREP answered, but its spectrum listing for the designation could not be read to exhaustion, so no epoch was selected. Ranking a partial set could return a confident classification of the wrong spectrum.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -617,6 +681,39 @@
   },
   "components": {
     "schemas": {
+      "AmbiguousDesignationError": {
+        "type": "object",
+        "description": "A designation that matches more than one WISeREP object. The matching objects travel alongside the message so a caller can offer the choice without parsing designations out of the message text.",
+        "properties": {
+          "detail": { "type": "string", "description": "Human-readable refusal, which also lists the matching designations in parentheses" },
+          "objects": {
+            "type": "array",
+            "description": "The distinct objects the designation matched, in the order WISeREP's export listed them",
+            "items": {
+              "type": "object",
+              "properties": {
+                "designation": { "type": "string", "description": "The designation as WISeREP spells it, e.g. 'SN 2002ea'" },
+                "object_type": { "type": "string", "description": "WISeREP's object type, e.g. 'SN Ia'; empty when WISeREP records none" },
+                "redshift": { "type": "number", "nullable": true, "description": "The recorded redshift, or null when WISeREP records none" }
+              }
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "description": "The canonical error envelope: a single human-readable message.",
+        "properties": {
+          "detail": { "type": "string" }
+        }
+      },
+      "WritesDisabledError": {
+        "type": "object",
+        "description": "The envelope returned when API write endpoints are disabled.",
+        "properties": {
+          "error": { "type": "string" }
+        }
+      },
       "ModelSummary": {
         "type": "object",
         "properties": {

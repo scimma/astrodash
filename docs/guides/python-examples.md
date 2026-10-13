@@ -102,17 +102,17 @@ if result:
     plot_spectrum_result(result)
 ```
 
-## Using OSC References
+## Using Object Designations
 
-### Process OSC Reference
+### Process Object Designation
 
 ```python
-def process_osc_reference(osc_ref, smoothing=6):
+def process_object_designation(object_name, smoothing=6):
     """
-    Process a spectrum using an OSC reference.
+    Process a spectrum by object designation, resolved against WISeREP.
     """
     params = {
-        'oscRef': osc_ref,
+        'objectName': object_name,
         'smoothing': smoothing
     }
 
@@ -128,9 +128,9 @@ def process_osc_reference(osc_ref, smoothing=6):
         return None
 
 # Example usage
-result = process_osc_reference("osc-sn2011fe-0", smoothing=4)
+result = process_object_designation("2002er", smoothing=4)
 if result:
-    print(f"OSC spectrum classified as: {result['classification']['best_matches'][0]['type']}")
+    print(f"WISeREP spectrum classified as: {result['classification']['best_matches'][0]['type']}")
     print(f"Confidence: {result['classification']['best_matches'][0]['confidence']:.2f}")
     print(f"Age bin: {result['classification']['best_matches'][0]['age_bin']}")
 ```

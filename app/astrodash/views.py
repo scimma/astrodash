@@ -9,6 +9,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 from asgiref.sync import async_to_sync
 from astrodash.config.logging import get_logger
 from astrodash.core.exceptions import (
+    AmbiguousDesignationException,
     AppException,
     ValidationException,
     TemplateNotFoundException,
@@ -27,7 +28,7 @@ from astrodash.services import (
     get_batch_processing_service,
     get_redshift_service,
 )
-from astrodash.shared.utils.helpers import sanitize_for_json, construct_osc_reference
+from astrodash.shared.utils.helpers import sanitize_for_json
 
 logger = get_logger(__name__)
 
@@ -51,6 +52,38 @@ def api_writes_required(view_func):
 
 def _json_error(message: str, status: int = 400):
     return JsonResponse({"detail": message}, status=status)
+
+
+def _ambiguous_designation_payload(exc: AmbiguousDesignationException) -> dict:
+    """Build the response body for an ambiguous-designation refusal.
+
+    The matching objects travel as a list alongside the message so a client can
+    offer the researcher the choice without parsing designations back out of
+    the message text. The type and redshift travel with each designation
+    because a list of bare names asks someone to pick between things they
+    cannot tell apart.
+
+    Args:
+        exc: The refusal the by-name lookup raised, carrying the matching
+            objects on its ``objects`` attribute.
+
+    Returns:
+        A mapping of ``detail`` (the refusal message) and ``objects`` -- one
+        entry per matching object, each carrying ``designation``,
+        ``object_type`` (empty when the source records none) and ``redshift``
+        (``null`` when the source records none).
+    """
+    return {
+        "detail": exc.message,
+        "objects": [
+            {
+                "designation": str(item.get("designation", "")),
+                "object_type": str(item.get("object_type") or ""),
+                "redshift": item.get("redshift"),
+            }
+            for item in exc.objects
+        ],
+    }
 
 
 def _parse_params(raw: str | None) -> dict:
@@ -220,10 +253,7 @@ def process_spectrum(request):
     except AppException as exc:
         return _json_error(exc.message, status=exc.status_code)
 
-    osc_ref = params.get("oscRef")
-    if osc_ref:
-        params["oscRef"] = construct_osc_reference(osc_ref)
-        osc_ref = params["oscRef"]
+    object_name = params.get("objectName")
 
     spectrum_service = get_spectrum_service()
     processing_service = get_spectrum_processing_service()
@@ -232,7 +262,7 @@ def process_spectrum(request):
     try:
         spectrum = async_to_sync(spectrum_service.get_spectrum_data)(
             file=uploaded_file,
-            osc_ref=osc_ref,
+            object_name=object_name,
         )
         try:
             async_to_sync(spectrum_service.save_spectrum)(spectrum)
@@ -263,6 +293,8 @@ def process_spectrum(request):
         }
         return JsonResponse(payload)
 
+    except AmbiguousDesignationException as exc:
+        return JsonResponse(_ambiguous_designation_payload(exc), status=exc.status_code)
     except AppException as exc:
         return _json_error(exc.message, status=exc.status_code)
     except Exception as exc:  # noqa: BLE001 - generic failure path

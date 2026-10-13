@@ -14,10 +14,20 @@ from astrodash.domain.services.model_service import ModelService
 from astrodash.domain.services.batch_processing_service import BatchProcessingService
 from astrodash.domain.services.redshift_service import RedshiftService
 from astrodash.domain.services.twins_search_service import TwinsSearchService
-from astrodash.infrastructure.storage.file_spectrum_repository import FileSpectrumRepository, OSCSpectrumRepository
+from astrodash.infrastructure.storage.file_spectrum_repository import (
+    FileSpectrumRepository,
+)
+from astrodash.infrastructure.storage.wiserep_spectrum_repository import (
+    WiserepSpectrumRepository,
+)
+from astrodash.infrastructure.wiserep.client import WiserepClient
 from astrodash.infrastructure.storage.model_storage import ModelStorage
 from astrodash.infrastructure.ml.templates import create_spectrum_template_handler
-from astrodash.infrastructure.django_repositories import DjangoSpectrumRepository, DjangoModelRepository
+from astrodash.infrastructure.django_repositories import (
+    DjangoCandidateSetRepository,
+    DjangoModelRepository,
+    DjangoSpectrumRepository,
+)
 from astrodash.infrastructure.ml.model_factory import ModelFactory
 
 
@@ -48,8 +58,18 @@ def get_file_repo() -> FileSpectrumRepository:
 
 
 @lru_cache()
-def get_osc_repo() -> OSCSpectrumRepository:
-    return OSCSpectrumRepository(get_config())
+def get_wiserep_repo() -> WiserepSpectrumRepository:
+    return WiserepSpectrumRepository(settings=get_config())
+
+
+@lru_cache()
+def get_wiserep_client() -> WiserepClient:
+    return WiserepClient(settings=get_config())
+
+
+@lru_cache()
+def get_candidate_set_repo() -> DjangoCandidateSetRepository:
+    return DjangoCandidateSetRepository()
 
 
 @lru_cache()
@@ -61,8 +81,10 @@ def get_db_repo() -> DjangoSpectrumRepository:
 def get_spectrum_service() -> SpectrumService:
     return SpectrumService(
         file_repo=get_file_repo(),
-        osc_repo=get_osc_repo(),
+        wiserep_repo=get_wiserep_repo(),
         db_repo=get_db_repo(),
+        candidate_set_repo=get_candidate_set_repo(),
+        wiserep_client=get_wiserep_client(),
         settings=get_config(),
     )
 

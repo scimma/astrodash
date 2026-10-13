@@ -1,6 +1,6 @@
 # Process Spectrum
 
-Process and classify a single spectrum file or OSC reference.
+Process and classify a single spectrum file or object designation.
 
 ## Endpoint
 
@@ -27,7 +27,7 @@ multipart/form-data
 | `file` | File | No\* | Spectrum file to upload (FITS, DAT, TXT, or LNW) |
 | `params` | String (JSON) | No | Processing parameters as JSON string |
 
-\*Either `file` or `oscRef` in params is required.
+\*Either `file` or `objectName` in params is required.
 
 ### Processing Parameters
 
@@ -36,7 +36,7 @@ The `params` parameter accepts a JSON string with the following fields:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `modelType` | String | \- | Classifier to use. **Required** unless `model_id` is supplied. Must be one of the active built-in model ids (`dash`, `transformer`, `1dCNN_z`, `1dCNN_noz`, `latent_z`, `latent_noz`); an omitted, unknown, or retired value returns `400`. The valid values track the model registry, so they change as models are added or retired. See [Built-in models](#built-in-models). |
-| `oscRef` | String | \- | SN name on Open Supernova Catalog (e.g., "sn2002er") |
+| `objectName` | String | \- | Object designation resolved against WISeREP (e.g., "2002er", "SN2002er", or a survey internal name) |
 | `smoothing` | Integer | 0 | Smoothing parameter |
 | `knownZ` | Boolean | false | Whether redshift is known. Required (with `zValue`) for `transformer`, `1dCNN_z`, and `latent_z`. Not used as a model input for `1dCNN_noz` or `latent_noz`. Optional for `dash`. |
 | `zValue` | Float | \- | Redshift value (required if `knownZ` is true, and for models that require redshift as an input) |
@@ -93,19 +93,89 @@ All of the following ids are **public** (listed, ungated). Send them as `params.
 
 ### Error Responses
 
+Every failure answers with the canonical error envelope -- a single `detail`
+string -- except `409`, which carries the matching objects as well. See
+[Error Model](../errors.md) for the full status-code table.
+
 **Status Code:** `400 Bad Request`
+
+An invalid file, or a `modelType` that is omitted (without a `model_id`),
+unknown, or retired.
 
 ```json
 {
-  "detail": "No spectrum file or OSC reference provided"
+  "detail": "Unknown model type: bogus."
+}
+```
+
+**Status Code:** `404 Not Found`
+
+The designation resolved against WISeREP, but nothing it holds is public, of
+the object itself, and classifiable, so no epoch was selected.
+
+```json
+{
+  "detail": "No public, classifiable spectrum is available for '2002er'."
+}
+```
+
+**Status Code:** `409 Conflict`
+
+The designation matches more than one WISeREP object. The request is refused
+rather than guessed, and the matching objects are returned under `objects` so a
+client can offer the choice without parsing designations back out of `detail`.
+Each entry carries `designation` as WISeREP spells it, `object_type` (empty
+when WISeREP records none), and `redshift` (`null` when WISeREP records none).
+The entries keep the order WISeREP's export listed them in.
+
+```json
+{
+  "detail": "Designation '2002e' matches more than one object (SN 2002ea, SN 2002eb). Choose which one to classify.",
+  "objects": [
+    {
+      "designation": "SN 2002ea",
+      "object_type": "SN Ia",
+      "redshift": 0.0279
+    },
+    {
+      "designation": "SN 2002eb",
+      "object_type": "",
+      "redshift": null
+    }
+  ]
+}
+```
+
+**Status Code:** `422 Unprocessable Entity`
+
+Neither a `file` nor an `objectName` was supplied, `params` was malformed, or
+the selected WISeREP spectrum cannot be classified as fetched.
+
+```json
+{
+  "detail": "No spectrum file or object designation provided"
 }
 ```
 
 **Status Code:** `500 Internal Server Error`
 
+A processing failure, or WISeREP could not be read within its bounds.
+
 ```json
 {
   "detail": "Classification error: Model not found"
+}
+```
+
+**Status Code:** `502 Bad Gateway`
+
+WISeREP answered, but its spectrum listing for the designation could not be
+read to exhaustion, so no epoch was selected -- ranking a partial set could
+return a confident classification of the wrong spectrum.
+
+```json
+{
+  "detail": "The spectrum listing for '2002er' could not be read in full, so no epoch was selected."
 }
 ```
 
@@ -158,13 +228,13 @@ fetch('http://localhost:8000/api/v1/process', {
 .then(data => console.log(data));
 ```
 
-### OSC Reference
+### Object Designation
 
 #### cURL
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/process" \
-  -F 'params={"modelType": "dash", "oscRef": "osc-sn2011fe-0", "smoothing": 4}'
+  -F 'params={"modelType": "dash", "objectName": "2002er", "smoothing": 4}'
 ```
 
 #### Python
@@ -173,7 +243,7 @@ curl -X POST "http://localhost:8000/api/v1/process" \
 import requests
 
 data = {
-    'params': '{"modelType": "dash", "oscRef": "osc-sn2011fe-0", "smoothing": 4}'
+    'params': '{"modelType": "dash", "objectName": "2002er", "smoothing": 4}'
 }
 
 response = requests.post('http://localhost:8000/api/v1/process', data=data)
@@ -248,4 +318,41 @@ For `1dCNN_z`, `1dCNN_noz`, `latent_z`, and `latent_noz`, `best_matches[].type` 
 
   ```json
   { "detail": "Validation failed." }
+  ```
+
+- 422: neither a `file` nor an `objectName` supplied
+
+  ```json
+  { "detail": "No spectrum file or object designation provided" }
+  ```
+
+- 422: the selected WISeREP spectrum cannot be classified as fetched
+
+  ```json
+  { "detail": "spectrum 12345 for '2002er' leaves 42 point(s) inside 4000-9000 Angstroms, below the 100-point minimum" }
+  ```
+
+- 404: the designation holds no public, classifiable spectrum
+
+  ```json
+  { "detail": "No public, classifiable spectrum is available for '2002er'." }
+  ```
+
+- 409: the designation matches more than one object (see
+  [409 Conflict](#error-responses) for the `objects` list)
+
+  ```json
+  { "detail": "Designation '2002e' matches more than one object (SN 2002ea, SN 2002eb). Choose which one to classify." }
+  ```
+
+- 502: WISeREP's spectrum listing could not be read in full
+
+  ```json
+  { "detail": "The spectrum listing for '2002er' could not be read in full, so no epoch was selected." }
+  ```
+
+- 500: WISeREP could not be read within its bounds
+
+  ```json
+  { "detail": "WISeREP service error: export for '2002er' exceeded the 120-second deadline after 3 page(s)" }
   ```
