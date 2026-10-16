@@ -296,17 +296,11 @@ dash_output = {
 }
 ```
 
-#### Transformer Classifier
+#### Transformer Classifier (retired)
 
-```python
-# Transformer output
-transformer_output = {
-    "type": "Ia-norm",
-    "confidence": 0.93,
-    "age_bin": "4 to 8",
-    "model_used": "transformer_classifier"
-}
-```
+The Transformer classifier is retired. It is no longer accepted for new
+classifications (`modelType=transformer` returns `400`), so the API no longer
+produces Transformer output.
 
 #### User-Uploaded Model
 

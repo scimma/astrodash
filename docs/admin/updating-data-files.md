@@ -17,7 +17,7 @@ missing or have changed.
 
 | Category | S3 path prefix | Local path | Description |
 |----------|---------------|------------|-------------|
-| Pre-trained models | `init/data/pre_trained_models/` | `/mnt/astrodash-data/pre_trained_models/` | PyTorch models for DASH and Transformer classifiers |
+| Pre-trained models | `init/data/pre_trained_models/` | `/mnt/astrodash-data/pre_trained_models/` | PyTorch models for the DASH, 1D CNN, and latent classifiers, plus the retired Transformer's weights (kept so results it produced still render) |
 | Spectra | `init/data/spectra/` | `/mnt/astrodash-data/spectra/` | JSON spectrum example files |
 | Explorer | `init/data/explorer/` | `/mnt/astrodash-data/explorer/` | Spectral twins embeddings, PCA, and UMAP data |
 | User models | `init/data/user_models/` | `/mnt/astrodash-data/user_models/` | User-uploaded trained models |

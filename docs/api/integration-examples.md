@@ -259,7 +259,7 @@ async fn process_spectrum(file_path: &str) -> Result<Value, Box<dyn std::error::
 
 - **Backend**: FastAPI with async/await support throughout
 - **File Processing**: Supports ZIP archives and individual file uploads
-- **ML Models**: DASH (CNN) and Transformer models with user model support
+- **ML Models**: DASH (CNN), 1D CNN, and latent models with user model support
 - **Error Handling**: Structured error responses with HTTP status codes
 - **Logging**: Comprehensive request logging with unique IDs
 - **Security**: Rate limiting, CORS, security headers, file validation

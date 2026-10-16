@@ -2,15 +2,15 @@
 
 AstroDash is a Django web application for ML-based supernova spectrum
 classification using deep learning. It provides both a web interface and a
-REST API for classifying astronomical spectra using DASH CNN, Transformer, and
-user-uploaded models.
+REST API for classifying astronomical spectra using DASH CNN, 1D CNN, latent,
+and user-uploaded models.
 
 ## Features
 
 - **Single spectrum classification** — upload a spectrum file or reference a
   supernova by name from the Open Supernova Catalog
 - **Batch processing** — classify multiple spectra via ZIP file upload
-- **Multiple classifier models** — DASH CNN, Transformer, and user-uploaded
+- **Multiple classifier models** — DASH CNN, 1D CNN, latent, and user-uploaded
   TorchScript models
 - **Spectral twins explorer** — find similar spectra using embeddings and UMAP
 - **Redshift estimation** — estimate redshift using DASH templates
