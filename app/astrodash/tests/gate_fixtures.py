@@ -33,8 +33,47 @@ GATE_SIGNING_KEY = "test-entry-link-signing-key"
 GATE_LINK_BASE_URL = "https://astrodash-dev.example.org"
 
 
+# The listed, ungated model a patched roster promotes to default when the model
+# it gates (or unlists, or retires) was the default. Every patched roster must
+# still hold exactly one active, listed, ungated default -- patching ``MODELS``
+# skips the import-time validators, so an invalid roster would otherwise go
+# unnoticed. ``1dCNN_z`` is the earliest such model in registry order after DASH.
+STAND_IN_DEFAULT = "1dCNN_z"
+
+
+def promote_stand_in_default(
+    models: Tuple[ModelDefinition, ...], displaced: str
+) -> Tuple[ModelDefinition, ...]:
+    """Move the default flag off one model and onto the stand-in default.
+
+    Args:
+        models: A ``MODELS``-shaped tuple.
+        displaced: The id that can no longer be the default in this roster.
+            If it is not the default, the roster is returned unchanged.
+
+    Returns:
+        A ``MODELS``-shaped tuple whose default, if it was ``displaced``, is
+        now :data:`STAND_IN_DEFAULT`.
+    """
+    if not any(m.id == displaced and m.is_default for m in models):
+        return models
+    return tuple(
+        (
+            replace(m, is_default=False)
+            if m.id == displaced
+            else replace(m, is_default=True) if m.id == STAND_IN_DEFAULT else m
+        )
+        for m in models
+    )
+
+
 def gated_roster(model_id: str = "dash") -> Tuple[ModelDefinition, ...]:
     """Return a roster in which one built-in model is gated.
+
+    If the gated model was the default, :data:`STAND_IN_DEFAULT` becomes the
+    default instead, because the registry forbids a gated default. The result
+    is checked with ``validate_registry`` so no caller tests an impossible
+    roster.
 
     Args:
         model_id: The built-in id to gate. It is made unlisted at the same
@@ -42,11 +81,16 @@ def gated_roster(model_id: str = "dash") -> Tuple[ModelDefinition, ...]:
 
     Returns:
         A ``MODELS``-shaped tuple suitable for ``patch.object``.
+
+    Raises:
+        ValueError: If the resulting roster violates a registry invariant.
     """
-    return tuple(
+    roster = tuple(
         replace(m, listed=False, requires_credential=True) if m.id == model_id else m
-        for m in model_registry.MODELS
+        for m in promote_stand_in_default(model_registry.MODELS, model_id)
     )
+    model_registry.validate_registry(roster)
+    return roster
 
 
 @contextmanager

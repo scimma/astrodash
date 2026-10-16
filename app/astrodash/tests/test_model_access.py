@@ -6,8 +6,8 @@ credential, which establishes a session scoped to that one model.
 
 Every test here builds its gated model with ``dataclasses.replace`` over a real
 definition plus a patched roster (KTD9): DASH becomes gated -- and therefore
-unlisted, which the registry invariants require -- while Transformer is left
-untouched so it keeps satisfying the listed, ungated active-default invariant.
+unlisted, which the registry invariants require -- and the default flag moves to
+``1dCNN_z`` so the roster keeps exactly one listed, ungated active default.
 Such a fixture never passes through the import-time validators, so nothing here
 reloads modules.
 
@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.messages import get_messages
 from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.urls import reverse
@@ -39,6 +40,7 @@ from astrodash.tests.gate_fixtures import (
     gated_gate,
     gated_roster,
     mocked_classification,
+    promote_stand_in_default,
     redeem_scope,
 )
 
@@ -170,7 +172,7 @@ class SessionIdentityTests(TestCase):
     def test_granting_a_scope_rotates_the_session_key(self):
         # Give the client a session before it earns anything.
         session = self.client.session
-        session["selected_model_type"] = "transformer"
+        session["selected_model_type"] = "1dCNN_z"
         session.save()
         before = self.client.cookies["sessionid"].value
 
@@ -498,7 +500,7 @@ class ScopeEnforcementTests(TestCase):
             model_access, "_now", return_value=1001.0
         ), mocked_classification("dash") as classification_svc:
             self.client.post(
-                reverse("astrodash:classify"), data=classify_post("transformer")
+                reverse("astrodash:classify"), data=classify_post("1dCNN_z")
             )
         self.assertEqual(
             classification_svc.classify_spectrum.await_args.kwargs["model_type"], "dash"
@@ -606,7 +608,7 @@ class ScopeBoundaryTests(TestCase):
         ), patch("astrodash.ui_views.get_model_service", return_value=model_svc):
             resp = self.client.post(
                 reverse("astrodash:model_selection"),
-                data={"model_type": "transformer", "action_type": "classify"},
+                data={"model_type": "1dCNN_z", "action_type": "classify"},
             )
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp["Location"], reverse("astrodash:classify"))
@@ -719,8 +721,9 @@ class ScopeBoundaryTests(TestCase):
         session.save()
         unlisted = tuple(
             replace(m, listed=False) if m.id == "dash" else m
-            for m in model_registry.MODELS
+            for m in promote_stand_in_default(model_registry.MODELS, "dash")
         )
+        model_registry.validate_registry(unlisted)
         with patch.object(model_registry, "MODELS", unlisted):
             resp = self.client.get(reverse("astrodash:batch_process_ui"))
         self.assertEqual(resp.status_code, 302)
@@ -863,6 +866,56 @@ class UngatedFlowUnaffectedTests(TestCase):
         )
 
 
+class RetiredTransformerSessionTests(TestCase):
+    """R7: a session still holding the retired Transformer cannot classify with it.
+
+    These run against the real roster, where the Transformer is retired, rather
+    than a patched one: the point is that the shipped registry turns it away.
+    """
+
+    def setUp(self):
+        session = self.client.session
+        session["selected_model_type"] = "transformer"
+        session.save()
+
+    def assert_sent_back_to_the_picker(self, resp) -> None:
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            resp["Location"], reverse("astrodash:model_selection") + "?action=classify"
+        )
+        self.assertIn(
+            model_access.MODEL_NO_LONGER_SELECTABLE_MESSAGE,
+            [str(m) for m in get_messages(resp.wsgi_request)],
+        )
+        self.assertIsNone(self.client.session.get("selected_model_type"))
+
+    def test_stale_session_get_is_sent_back_to_the_picker(self):
+        resp = self.client.get(reverse("astrodash:classify"))
+        self.assert_sent_back_to_the_picker(resp)
+
+    def test_stale_session_post_is_sent_back_and_nothing_is_classified(self):
+        with mocked_classification("transformer") as classification_svc:
+            resp = self.client.post(
+                reverse("astrodash:classify"), data=classify_post("transformer")
+            )
+        self.assert_sent_back_to_the_picker(resp)
+        classification_svc.classify_spectrum.assert_not_awaited()
+
+    def test_selecting_the_transformer_is_refused_as_an_invalid_choice(self):
+        session = self.client.session
+        session["selected_model_type"] = "dash"
+        session.save()
+        model_svc = MagicMock(list_models=AsyncMock(return_value=[]))
+        with patch("astrodash.ui_views.get_model_service", return_value=model_svc):
+            resp = self.client.post(
+                reverse("astrodash:model_selection"),
+                data={"model_type": "transformer", "action_type": "classify"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("model_type", resp.context["form"].errors)
+        self.assertEqual(self.client.session["selected_model_type"], "dash")
+
+
 class MintCommandTests(TestCase):
     """R10: minting is operator-only, and no route mints a link."""
 
@@ -891,7 +944,7 @@ class MintCommandTests(TestCase):
     def test_command_refuses_an_ungated_model(self):
         with gate_configured():
             with self.assertRaises(CommandError):
-                call_command("mint_model_link", "transformer", stdout=StringIO())
+                call_command("mint_model_link", "1dCNN_z", stdout=StringIO())
 
     def test_command_refuses_an_unknown_model(self):
         with gated_gate():

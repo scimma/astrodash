@@ -1,9 +1,9 @@
 """Characterization tests locking current classifier behavior (plan U1).
 
-These pin the observable behavior of the two built-in models (DASH,
-Transformer) at the form / service / view-gate seam -- deliberately without a
-live model forward pass -- so the model-registry refactor (U2-U5) can prove it
-preserved behavior. They must pass on the pre-refactor code and stay green
+These pin the observable behavior of the built-in models (DASH, the 1D CNN
+and latent variants, and the retired Transformer's resolution) at the form /
+service / view-gate seam -- deliberately without a live model forward pass --
+so the model-registry refactor (U2-U5) can prove it preserved behavior. They must pass on the pre-refactor code and stay green
 through every later unit.
 
 The classification-dependent gates (twins stash, template overlays) are
@@ -79,7 +79,7 @@ class SelectModelPageParityTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         return re.sub(r"<!--.*?-->", "", resp.content.decode(), flags=re.DOTALL)
 
-    def test_only_dash_and_transformer_cards_are_selectable(self):
+    def test_only_listed_active_cards_are_selectable(self):
         visible = self._render_visible()
         # A *selectable card* is an element with an onclick="selectModel('...')"
         # attribute. (The bare selectModel('upload') call in the page's own
@@ -88,7 +88,6 @@ class SelectModelPageParityTests(TestCase):
         self.assertEqual(
             card_ids,
             [
-                "transformer",
                 "dash",
                 "1dCNN_z",
                 "1dCNN_noz",
@@ -99,27 +98,48 @@ class SelectModelPageParityTests(TestCase):
         self.assertNotIn("user_model", card_ids)
         self.assertNotIn("upload", card_ids)
 
+    def test_retired_transformer_renders_no_card(self):
+        """R1: the retired Transformer offers no card for either action."""
+        model_svc = MagicMock(list_models=AsyncMock(return_value=[]))
+        for action in ("classify", "batch"):
+            with self.subTest(action=action), patch(
+                "astrodash.ui_views.get_model_service", return_value=model_svc
+            ):
+                resp = self.client.get(
+                    reverse("astrodash:model_selection") + f"?action={action}"
+                )
+                self.assertEqual(resp.status_code, 200)
+                visible = re.sub(
+                    r"<!--.*?-->", "", resp.content.decode(), flags=re.DOTALL
+                )
+                self.assertNotIn("selectModel('transformer')", visible)
+                self.assertNotIn("Transformer Model", visible)
+                self.assertIn("onclick=\"selectModel('dash')\"", visible)
+
     def test_cards_render_titles_descriptions_tags_badge_icon_and_order(self):
         visible = self._render_visible()
         # Titles and descriptions, unchanged from the hand-written cards.
-        self.assertIn("Transformer Model", visible)
         self.assertIn("Dash Model", visible)
-        self.assertIn(
-            "Advanced transformer-based model with 5-class classification", visible
-        )
         self.assertIn("CNN-based model from the original DASH paper", visible)
-        # Feature tags for both models.
-        for tag in ("Transformer", "5 Classes", "Fast Inference"):
-            self.assertIn(f">{tag}</span>", visible)
+        self.assertIn("1D CNN (redshift)", visible)
+        self.assertIn("1D convolutional classifier trained on WISeREP data", visible)
+        # Feature tags for DASH and the 1D CNN.
         for tag in ("CNN", "Template Matching", "RLap Scores"):
             self.assertIn(f">{tag}</span>", visible)
+        for tag in ("1D CNN", "5 Classes", "Redshift Input"):
+            self.assertIn(f">{tag}</span>", visible)
+        # The retired Transformer's card text is gone.
+        self.assertNotIn(
+            "Advanced transformer-based model with 5-class classification", visible
+        )
+        self.assertNotIn(">Transformer</span>", visible)
         # DASH's RECOMMENDED badge and flask icon, and only DASH's.
         self.assertEqual(visible.count("RECOMMENDED"), 1)
         self.assertIn("bi-flask", visible)
-        # Order: Transformer card precedes DASH card, as today.
+        # Order: DASH is now the first card, ahead of the 1D CNN.
         self.assertLess(
-            visible.index("onclick=\"selectModel('transformer')\""),
             visible.index("onclick=\"selectModel('dash')\""),
+            visible.index("onclick=\"selectModel('1dCNN_z')\""),
         )
 
     def test_no_per_model_data_model_type_css_rule_remains(self):
@@ -134,8 +154,9 @@ class UnlistedModelSurfaceTests(TestCase):
 
     DASH is made unlisted (but active and ungated) for the duration of each
     test, following the registry fixture idiom of ``dataclasses.replace`` over
-    a patched roster. Transformer is untouched, so it stays the listed, ungated
-    active default the registry invariants require, and doubles as the control
+    a patched roster. DASH is the registry default, and an unlisted default is
+    invalid, so the roster promotes 1D CNN (redshift) to the listed, ungated
+    active default the registry invariants require. It doubles as the control
     proving only the unlisted model disappeared.
     """
 
@@ -143,11 +164,18 @@ class UnlistedModelSurfaceTests(TestCase):
         """Return a roster where DASH is active and ungated but not listed.
 
         Returns:
-            tuple: A ``MODELS``-shaped tuple suitable for ``patch.object``.
+            tuple: A ``MODELS``-shaped tuple suitable for ``patch.object``,
+            already checked against :func:`model_registry.validate_registry`
+            because patching ``MODELS`` bypasses the import-time check.
         """
-        transformer = model_registry.get_definition("transformer")
+        onedcnn_z = model_registry.get_definition("1dCNN_z")
         dash = model_registry.get_definition("dash")
-        return (transformer, replace(dash, listed=False))
+        roster = (
+            replace(dash, listed=False, is_default=False),
+            replace(onedcnn_z, is_default=True),
+        )
+        model_registry.validate_registry(roster)
+        return roster
 
     def _render_visible(self, action):
         """Render the select-model page for an action, comments stripped.
@@ -173,18 +201,18 @@ class UnlistedModelSurfaceTests(TestCase):
     def test_unlisted_model_renders_no_card_for_classify_action(self):
         visible = self._render_visible("classify")
         self.assertNotIn("onclick=\"selectModel('dash')\"", visible)
-        self.assertIn("onclick=\"selectModel('transformer')\"", visible)
+        self.assertIn("onclick=\"selectModel('1dCNN_z')\"", visible)
 
     def test_unlisted_model_renders_no_card_for_batch_action(self):
         visible = self._render_visible("batch")
         self.assertNotIn("onclick=\"selectModel('dash')\"", visible)
-        self.assertIn("onclick=\"selectModel('transformer')\"", visible)
+        self.assertIn("onclick=\"selectModel('1dCNN_z')\"", visible)
 
     def test_unlisted_model_absent_from_classify_form_choices(self):
         with patch.object(model_registry, "MODELS", self._unlisted_roster()):
             choices = [value for value, _ in ClassifyForm().fields["model"].choices]
         self.assertNotIn("dash", choices)
-        self.assertIn("transformer", choices)
+        self.assertIn("1dCNN_z", choices)
         # The user-uploaded entry is unrelated to listing and stays put.
         self.assertIn("user_uploaded", choices)
 
@@ -194,7 +222,7 @@ class UnlistedModelSurfaceTests(TestCase):
                 value for value, _ in ModelSelectionForm().fields["model_type"].choices
             ]
         self.assertNotIn("dash", choices)
-        self.assertIn("transformer", choices)
+        self.assertIn("1dCNN_z", choices)
 
     def _post_selection(self, model_type):
         """POST the selection form naming a model, with the model service mocked.
@@ -223,13 +251,45 @@ class UnlistedModelSurfaceTests(TestCase):
         self.assertIsNone(self.client.session.get("selected_model_type"))
 
     def test_selection_post_naming_listed_model_still_succeeds(self):
-        resp = self._post_selection("transformer")
+        resp = self._post_selection("1dCNN_z")
         self.assertEqual(resp.status_code, 302)
-        self.assertEqual(self.client.session.get("selected_model_type"), "transformer")
+        self.assertEqual(self.client.session.get("selected_model_type"), "1dCNN_z")
+
+
+class RetiredTransformerSelectionTests(TestCase):
+    """R2: the retired Transformer is not offered or accepted by either form."""
+
+    def test_classify_form_omits_transformer_and_defaults_to_dash(self):
+        field = ClassifyForm().fields["model"]
+        choices = [value for value, _ in field.choices]
+        self.assertNotIn("transformer", choices)
+        self.assertIn("dash", choices)
+        self.assertEqual(field.initial, "dash")
+
+    def test_selection_form_omits_transformer(self):
+        choices = [
+            value for value, _ in ModelSelectionForm().fields["model_type"].choices
+        ]
+        self.assertNotIn("transformer", choices)
+        self.assertIn("dash", choices)
+
+    def test_selection_post_naming_transformer_is_refused(self):
+        session = self.client.session
+        session["selected_model_type"] = "dash"
+        session.save()
+        model_svc = MagicMock(list_models=AsyncMock(return_value=[]))
+        with patch("astrodash.ui_views.get_model_service", return_value=model_svc):
+            resp = self.client.post(
+                reverse("astrodash:model_selection"),
+                data={"model_type": "transformer", "action_type": "classify"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("model_type", resp.context["form"].errors)
+        self.assertEqual(self.client.session.get("selected_model_type"), "dash")
 
 
 class ClassifyFormRedshiftParityTests(TestCase):
-    """AE2 / AE3: Transformer requires a redshift; DASH does not.
+    """AE2 / AE3: 1D CNN (redshift) requires a redshift; DASH does not.
 
     Which *layer* applies the requirement depends on the input. An uploaded
     spectrum carries no redshift of its own, so the form refuses it at
@@ -306,21 +366,23 @@ class ClassifyFormRedshiftParityTests(TestCase):
             "would stop this model classifying without a redshift",
         )
 
-    def test_transformer_requires_redshift_for_an_uploaded_spectrum(self):
-        self.assert_upload_refused_without_redshift("transformer")
+    def test_1dcnn_z_requires_redshift_for_an_uploaded_spectrum(self):
+        self.assert_upload_refused_without_redshift("1dCNN_z")
 
-    def test_transformer_defers_the_requirement_for_a_submitted_name(self):
-        self.assert_name_defers_the_requirement("transformer")
+    def test_1dcnn_z_defers_the_requirement_for_a_submitted_name(self):
+        self.assert_name_defers_the_requirement("1dCNN_z")
 
     def test_required_redshift_message_names_no_model(self):
         """R13: the message follows the policy, so it names no model literally."""
-        form = self.assert_upload_refused_without_redshift("transformer")
+        form = self.assert_upload_refused_without_redshift("1dCNN_z")
         # The constant is checked alongside the rendered errors because the
         # deferred gate raises the same message from the view, where no form
         # error list carries it.
         for error in list(form.errors["redshift"]) + [REDSHIFT_REQUIRED_MESSAGE]:
             self.assertNotIn("Transformer", error)
             self.assertNotIn("transformer", error)
+            self.assertNotIn("1D CNN", error)
+            self.assertNotIn("1dCNN", error)
             self.assertNotIn("Dash", error)
 
     def test_dash_does_not_require_redshift(self):
@@ -366,9 +428,9 @@ class BatchRlapParityTests(TestCase):
         )
         self.assertEqual(out["a.dat"]["rlap"], 7.5)
 
-    def test_rlap_absent_for_transformer(self):
+    def test_rlap_absent_for_1dcnn_z(self):
         out = _format_batch_results(
-            self._results(), {"modelType": "transformer", "calculateRlap": True}
+            self._results(), {"modelType": "1dCNN_z", "calculateRlap": True}
         )
         self.assertEqual(out["a.dat"]["rlap"], "-")
 
@@ -406,10 +468,10 @@ class BatchRunMetadataTests(TestCase):
 
     def test_submitted_input_redshift_is_preserved(self):
         meta = _batch_run_metadata(
-            "transformer", self._params(zValue=0.05), classified_at="t"
+            "1dCNN_z", self._params(zValue=0.05), classified_at="t"
         )
         self.assertEqual(meta["input_redshift"], 0.05)
-        self.assertEqual(meta["model_type"], "transformer")
+        self.assertEqual(meta["model_type"], "1dCNN_z")
 
     def test_user_uploaded_model_type_is_not_rewritten_to_dash(self):
         # params['modelType'] is a display fallback of 'dash' for user models;
@@ -670,7 +732,7 @@ class RedshiftEstimationGateParityTests(TestCase):
             [1.0, 1.0, 1.0],
             "Ia",
             "2 to 6",
-            model_type="transformer",
+            model_type="1dCNN_z",
         )
         self.assertIsNone(out["estimated_redshift"])
         self.assertIn("only available for DASH", out["message"])
@@ -739,6 +801,8 @@ class PreprocessingVariantParityTests(TestCase):
         self.assertEqual(out["redshift"], 0.11)
 
     def test_transformer_uses_transformer_processor(self):
+        # Deliberately the retired Transformer: its definition still resolves,
+        # so a stored Transformer result keeps its preprocessing variant (R6).
         svc = self._service()
         out = svc.prepare_for_model(self._spectrum(), "transformer")
         svc.transformer_processor.process.assert_called_once()
@@ -869,8 +933,8 @@ class BatchRedshiftGateParityTests(TestCase):
             data={"smoothing": 0, "min_wave": 3500, "max_wave": 10000},
         )
 
-    def test_transformer_batch_requires_redshift(self):
-        resp = self._post_batch("transformer")
+    def test_1dcnn_z_batch_requires_redshift(self):
+        resp = self._post_batch("1dCNN_z")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("redshift", resp.context["form"].errors)
         self.assertTrue(
@@ -882,10 +946,12 @@ class BatchRedshiftGateParityTests(TestCase):
 
     def test_batch_required_redshift_message_names_no_model(self):
         """R13: the batch gate's message follows the policy, naming no model."""
-        resp = self._post_batch("transformer")
+        resp = self._post_batch("1dCNN_z")
         for error in resp.context["form"].errors["redshift"]:
             self.assertNotIn("Transformer", error)
             self.assertNotIn("transformer", error)
+            self.assertNotIn("1D CNN", error)
+            self.assertNotIn("1dCNN", error)
             self.assertNotIn("Dash", error)
 
     def test_dash_batch_does_not_require_redshift(self):
@@ -906,9 +972,9 @@ class RedshiftInputPolicyFlowTests(TestCase):
     classify form's ``clean`` and the batch view's own check).
 
     DASH is the model whose policy is varied, following the registry fixture
-    idiom of ``dataclasses.replace`` over a patched roster; Transformer is left
-    untouched so it keeps satisfying the registry invariants and doubles as the
-    unchanged control.
+    idiom of ``dataclasses.replace`` over a patched roster. DASH stays the
+    registry default, so the roster satisfies the registry invariants; 1D CNN
+    (redshift) is left untouched as the unchanged control.
     """
 
     # Markers for the two controls as crispy renders them.
@@ -924,9 +990,9 @@ class RedshiftInputPolicyFlowTests(TestCase):
         Returns:
             tuple: A ``MODELS``-shaped tuple suitable for ``patch.object``.
         """
-        transformer = model_registry.get_definition("transformer")
+        onedcnn_z = model_registry.get_definition("1dCNN_z")
         dash = model_registry.get_definition("dash")
-        return (transformer, replace(dash, redshift_input=policy))
+        return (replace(dash, redshift_input=policy), onedcnn_z)
 
     def _base_classify_data(self, model):
         return {
@@ -1023,7 +1089,7 @@ class RedshiftInputPolicyFlowTests(TestCase):
         self.assertIn(self.KNOWN_Z_FIELD_MARKER, html)
 
     def test_required_policy_still_renders_both_controls_in_classify(self):
-        html = self._render_visible("astrodash:classify", "transformer")
+        html = self._render_visible("astrodash:classify", "1dCNN_z")
         self.assertIn(self.REDSHIFT_FIELD_MARKER, html)
         self.assertIn(self.KNOWN_Z_FIELD_MARKER, html)
 
@@ -1222,7 +1288,7 @@ class ClassifyViewGateParityTests(TestCase):
 
         The mocks above returned ``best_matches: []``, so no classifier field
         ever reached ``request.session``, which is why this class did not catch
-        the transformer returning ``numpy.bool_`` for ``reliable``. Django
+        a classifier returning ``numpy.bool_`` for ``reliable``. Django
         JSON-encodes the session in SessionMiddleware.process_response, after
         the view has already returned, so an unserializable value there is a
         500 no view-level handler can catch. numpy 2 names its scalar ``bool``,
@@ -1242,7 +1308,7 @@ class ClassifyViewGateParityTests(TestCase):
             "best_match": {"type": "Ia"},
             "reliable_matches": probs[0] > 0.5,
         }
-        response, session = self._run_classify("transformer", results=results)
+        response, session = self._run_classify("1dCNN_z", results=results)
         self.assertEqual(response.status_code, 200)
         stored = (session.get("classify_results") or {}).get("best_matches") or []
         self.assertTrue(stored, "the classification never reached the session")
@@ -1256,8 +1322,8 @@ class ClassifyViewGateParityTests(TestCase):
         self.assertEqual(session.get("classify_dash_embedding"), [0.0] * 1024)
         self.assertTrue(session.get("classify_show_templates_section"))
 
-    def test_transformer_no_twins_embedding_and_no_templates(self):
-        _, session = self._run_classify("transformer")
+    def test_1dcnn_z_no_twins_embedding_and_no_templates(self):
+        _, session = self._run_classify("1dCNN_z")
         self.assertNotIn("classify_dash_embedding", session)
         self.assertFalse(session.get("classify_show_templates_section"))
 
@@ -1342,9 +1408,9 @@ class ResultSurfaceRenderingTests(TestCase):
         self.assertIn("show active", classification_pane)
         self.assertNotIn("show active", twins_pane)
 
-    def test_transformer_renders_only_the_classification_tab(self):
-        """AE7: Transformer declares Classification only, so no twins tab."""
-        html = self._render_visible("transformer")
+    def test_1dcnn_z_renders_only_the_classification_tab(self):
+        """AE7: 1D CNN (redshift) declares Classification only, so no twins tab."""
+        html = self._render_visible("1dCNN_z")
         self.assertIn(self.CLASSIFICATION_TAB, html)
         self.assertNotIn(self.TWINS_TAB, html)
         self.assertNotIn(self.TWINS_PANE, html)
@@ -1464,9 +1530,9 @@ class TwinsSupportingRouteGuardTests(TestCase):
 
     # --- twins_search: authorized from the CLASSIFIED model ---
 
-    def test_twins_search_refused_after_a_transformer_classification(self):
+    def test_twins_search_refused_after_a_1dcnn_z_classification(self):
         """AE6: refused even though a stale embedding sits in the session."""
-        self._session(selected="transformer", classified="transformer", embedding=True)
+        self._session(selected="1dCNN_z", classified="1dCNN_z", embedding=True)
         svc = MagicMock()
         with patch("astrodash.ui_views.get_twins_search_service", return_value=svc):
             resp = self.client.get(reverse("astrodash:twins_search"))
@@ -1506,8 +1572,8 @@ class TwinsSupportingRouteGuardTests(TestCase):
                 self.assertEqual(data.status_code, 200)
                 self.assertEqual(json.loads(self._drain(data)), {"points": []})
 
-    def test_transformer_selection_is_refused_both_twins_routes(self):
-        self._session(selected="transformer")
+    def test_1dcnn_z_selection_is_refused_both_twins_routes(self):
+        self._session(selected="1dCNN_z")
         self.assertEqual(
             self.client.get(reverse("astrodash:dash_twins")).status_code, 403
         )
@@ -1520,12 +1586,12 @@ class TwinsSupportingRouteGuardTests(TestCase):
         self.assertEqual(resp.status_code, 403)
 
     def test_twins_page_is_not_gated_on_the_classified_model(self):
-        """KTD5: a DASH selection whose last run was Transformer still browses.
+        """KTD5: a DASH selection whose last run was 1D CNN still browses.
 
         The page carries no classification artifact, so the classified model
         must not decide it -- only the selection does.
         """
-        self._session(selected="dash", classified="transformer")
+        self._session(selected="dash", classified="1dCNN_z")
         self.assertEqual(
             self.client.get(reverse("astrodash:dash_twins")).status_code, 200
         )
