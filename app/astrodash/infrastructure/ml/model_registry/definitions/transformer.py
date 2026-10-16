@@ -5,7 +5,7 @@ from astrodash.infrastructure.ml.classifiers.transformer_classifier import (
 )
 from astrodash.infrastructure.ml.model_registry._model_definition import (
     REDSHIFT_INPUT_REQUIRED,
-    STATUS_ACTIVE,
+    STATUS_RETIRED,
     SURFACE_CLASSIFICATION,
     ModelDefinition,
 )
@@ -18,9 +18,9 @@ TRANSFORMER = ModelDefinition(
     feature_tags=("Transformer", "5 Classes", "Fast Inference"),
     icon=None,
     recommended=False,
-    status=STATUS_ACTIVE,
+    status=STATUS_RETIRED,
     listed=True,
-    is_default=True,
+    is_default=False,
     requires_credential=False,
     redshift_input=REDSHIFT_INPUT_REQUIRED,
     preprocessing="transformer",

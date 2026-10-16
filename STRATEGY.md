@@ -61,7 +61,7 @@ its core promise.
 ### Model library & curation
 
 Adding, retiring, and maintaining the classifiers AstroDash ships with —
-DASH CNN, Transformer, and community-contributed TorchScript models —
+DASH CNN, the 1D CNN and latent models, and community-contributed TorchScript models —
 including evaluation and accuracy testing before integration.
 
 _Why it serves the approach:_ owns the commitment that users don't have

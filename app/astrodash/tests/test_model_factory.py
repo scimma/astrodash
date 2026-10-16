@@ -98,7 +98,6 @@ class FormChoiceTests(SimpleTestCase):
         self.assertEqual(
             list(form.fields["model"].choices),
             [
-                ("transformer", "Transformer Model"),
                 ("dash", "Dash Model"),
                 ("1dCNN_z", "1D CNN (redshift)"),
                 ("1dCNN_noz", "1D CNN (no redshift)"),
@@ -107,14 +106,13 @@ class FormChoiceTests(SimpleTestCase):
                 ("user_uploaded", "User uploaded model"),
             ],
         )
-        self.assertEqual(form.fields["model"].initial, "transformer")
+        self.assertEqual(form.fields["model"].initial, "dash")
 
     def test_selection_form_choices(self):
         form = ModelSelectionForm()
         self.assertEqual(
             list(form.fields["model_type"].choices),
             [
-                ("transformer", "Transformer Model"),
                 ("dash", "Dash Model"),
                 ("1dCNN_z", "1D CNN (redshift)"),
                 ("1dCNN_noz", "1D CNN (no redshift)"),

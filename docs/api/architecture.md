@@ -22,7 +22,7 @@ AstroDASH follows a clean, layered architecture for maintainability and testabil
 
 4. **ML Infrastructure**
 
-   - Classifiers (Dash, Transformer, 1D CNN, latent, User) and preprocessing utilities
+   - Classifiers (Dash, 1D CNN, latent, User) and preprocessing utilities. The retired Transformer classifier also remains here so results it produced still render; it is not offered for new classifications
    - Template handling, RLAP computation, and data processing
    - Reside in `app/astrodash/infrastructure/ml/`
 
@@ -36,7 +36,7 @@ AstroDASH follows a clean, layered architecture for maintainability and testabil
 1. Django URL router dispatches to the API view, which parses form data (`file`, `params`)
 2. `SpectrumService` obtains spectrum data (file or object designation)
 3. `SpectrumProcessingService` applies filtering, smoothing, normalization, metadata
-4. `ClassificationService` selects the appropriate classifier (Dash, Transformer, 1D CNN, latent, or User) via `ModelFactory`
+4. `ClassificationService` selects the appropriate classifier (Dash, 1D CNN, latent, or User) via `ModelFactory`
 5. ML classifier runs inference
 6. Response is serialized with sanitized numeric types
 

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 from django.urls import reverse
@@ -17,6 +17,7 @@ from astrodash.infrastructure.ml.leaderboard.dataset import (
 )
 from astrodash.infrastructure.ml.leaderboard.evaluate import (
     _probability_vector,
+    evaluate_month,
     score_definition,
 )
 from astrodash.infrastructure.ml.leaderboard.metrics import score_predictions
@@ -78,7 +79,7 @@ class MetricsTests(SimpleTestCase):
 class ScoreDefinitionTests(SimpleTestCase):
     def test_redshift_required_skips_missing_z(self):
         definition = SimpleNamespace(
-            id="transformer",
+            id="1dCNN_z",
             redshift_input=REDSHIFT_INPUT_REQUIRED,
         )
         rows = [
@@ -414,6 +415,16 @@ class LeaderboardPageTests(SimpleTestCase):
         self.assertTrue(context["is_mock"])
         self.assertIsNone(context["rankings"][0]["rank"])
 
+    def _context_for(self, payload, months, selected):
+        with patch(
+            "astrodash.infrastructure.ml.leaderboard.page.available_months",
+            return_value=months,
+        ), patch(
+            "astrodash.infrastructure.ml.leaderboard.page.load_scores",
+            return_value=payload,
+        ):
+            return build_leaderboard_context(selected)
+
     def test_ranks_by_accuracy_then_roc(self):
         payload = {
             "month": "2026-07",
@@ -422,29 +433,88 @@ class LeaderboardPageTests(SimpleTestCase):
             "eval_window": "Jul 1 – Jul 31, 2026",
             "spectra_count": 3,
             "models": [
-                {"id": "dash", "accuracy": 80.0, "roc": 0.7, "precision": 0.5, "recall": 0.5},
-                {"id": "transformer", "accuracy": 80.0, "roc": 0.9, "precision": 0.8, "recall": 0.8},
-                {"id": "1dCNN_z", "accuracy": 60.0, "roc": 0.95, "precision": 0.6, "recall": 0.6},
-                {"id": "1dCNN_noz", "accuracy": 40.0, "roc": 0.6, "precision": 0.4, "recall": 0.4},
-                {"id": "latent_z", "accuracy": 30.0, "roc": 0.5, "precision": 0.3, "recall": 0.3},
-                {"id": "latent_noz", "accuracy": 20.0, "roc": 0.4, "precision": 0.2, "recall": 0.2},
+                {
+                    "id": "dash",
+                    "accuracy": 80.0,
+                    "roc": 0.7,
+                    "precision": 0.5,
+                    "recall": 0.5,
+                },
+                {
+                    "id": "1dCNN_z",
+                    "accuracy": 80.0,
+                    "roc": 0.9,
+                    "precision": 0.8,
+                    "recall": 0.8,
+                },
+                {
+                    "id": "1dCNN_noz",
+                    "accuracy": 40.0,
+                    "roc": 0.95,
+                    "precision": 0.4,
+                    "recall": 0.4,
+                },
+                {
+                    "id": "latent_z",
+                    "accuracy": 30.0,
+                    "roc": 0.5,
+                    "precision": 0.3,
+                    "recall": 0.3,
+                },
+                {
+                    "id": "latent_noz",
+                    "accuracy": 20.0,
+                    "roc": 0.4,
+                    "precision": 0.2,
+                    "recall": 0.2,
+                },
             ],
         }
-        with patch(
-            "astrodash.infrastructure.ml.leaderboard.page.available_months",
-            return_value=["2026-07"],
-        ), patch(
-            "astrodash.infrastructure.ml.leaderboard.page.load_scores",
-            return_value=payload,
-        ):
-            context = build_leaderboard_context("2026-07")
+        context = self._context_for(payload, ["2026-07"], "2026-07")
         self.assertFalse(context["is_mock"])
-        self.assertEqual(context["rankings"][0]["id"], "transformer")
+        # dash and 1dCNN_z tie on accuracy; the higher ROC wins the tie.
+        self.assertEqual(context["rankings"][0]["id"], "1dCNN_z")
         self.assertEqual(context["rankings"][1]["id"], "dash")
         self.assertEqual(context["rankings"][0]["rank"], 1)
-        self.assertEqual(context["rankings"][0]["model"], "Transformer Model")
+        self.assertEqual(context["rankings"][1]["rank"], 2)
+        self.assertEqual(context["rankings"][0]["model"], "1D CNN (redshift)")
         self.assertEqual(len(context["rankings"]), len(listed_definitions()))
         self.assertEqual(context["challenge"]["spectra_count"], 3)
+
+    def test_retired_transformer_row_is_not_ranked_in_any_month(self):
+        """A score file that still holds a transformer row must not show it.
+
+        Score files on disk are not rewritten when a model retires, so old
+        months keep their transformer row. The page drops it and the remaining
+        models rank contiguously from 1.
+        """
+        payload = {
+            "month": "2026-07",
+            "status": "Finalized",
+            "models": [
+                {"id": "transformer", "accuracy": 99.0, "roc": 0.99},
+                {"id": "dash", "accuracy": 80.0, "roc": 0.7},
+                {"id": "1dCNN_z", "accuracy": 70.0, "roc": 0.6},
+                {"id": "1dCNN_noz", "accuracy": 60.0, "roc": 0.5},
+                {"id": "latent_z", "accuracy": 50.0, "roc": 0.4},
+                {"id": "latent_noz", "accuracy": 40.0, "roc": 0.3},
+            ],
+        }
+        months = ["2026-08", "2026-07"]
+        for selected in months:
+            with self.subTest(month=selected):
+                context = self._context_for(payload, months, selected)
+                ids = [row["id"] for row in context["rankings"]]
+                self.assertEqual(
+                    ids, ["dash", "1dCNN_z", "1dCNN_noz", "latent_z", "latent_noz"]
+                )
+                self.assertEqual(
+                    [row["rank"] for row in context["rankings"]], [1, 2, 3, 4, 5]
+                )
+                self.assertNotIn(
+                    "Transformer Model",
+                    [row["model"] for row in context["rankings"]],
+                )
 
     def test_view_renders_listed_model_titles(self):
         response = self.client.get(reverse("astrodash:leaderboard"))
@@ -452,6 +522,33 @@ class LeaderboardPageTests(SimpleTestCase):
         body = response.content.decode("utf-8")
         for definition in listed_definitions():
             self.assertIn(definition.title, body)
+
+
+class EvaluateMonthTests(SimpleTestCase):
+    def test_retired_transformer_is_not_scored(self):
+        """The monthly evaluation scores listed models only.
+
+        The stubbed factory records every classifier the evaluation asks for,
+        so a retired model that still sat in the scoring loop would show up
+        here even though its row never reached the page.
+        """
+        factory = MagicMock()
+        module = "astrodash.infrastructure.ml.leaderboard.evaluate"
+        with patch(f"{module}.load_challenge", return_value=[]), patch(
+            f"{module}.load_snapshot_for", return_value=None
+        ), patch(f"{module}.get_settings"), patch(
+            f"{module}.ModelFactory", return_value=factory
+        ), patch(
+            f"{module}.write_scores"
+        ) as write_scores_mock:
+            payload = evaluate_month("2026-07", data_dir=Path("/nonexistent"))
+
+        requested = [call.args[0] for call in factory.get_classifier.call_args_list]
+        expected = ["dash", "1dCNN_z", "1dCNN_noz", "latent_z", "latent_noz"]
+        self.assertEqual(requested, expected)
+        self.assertNotIn("transformer", requested)
+        self.assertEqual([row["id"] for row in payload["models"]], expected)
+        write_scores_mock.assert_called_once_with(payload)
 
 
 class WriteScoresTests(SimpleTestCase):

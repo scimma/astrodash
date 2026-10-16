@@ -142,3 +142,7 @@ produced.
 If the leaderboard lands, point its `CHALLENGE_DATA_ROOT` at the mount path
 above; it currently resolves to `app/wiserep_scrape/data`, which this change
 stops tracking.
+
+Do not re-run evaluation for a month whose score file is already finalized and
+committed: it rewrites that file with only the currently listed models, so a
+model retired since then (such as the Transformer) drops out of that month.

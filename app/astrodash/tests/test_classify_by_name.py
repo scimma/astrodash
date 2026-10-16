@@ -442,7 +442,7 @@ class RedshiftTests(ClassifyByNameTestCase):
 
     def test_a_recorded_redshift_is_populated_and_labelled(self):
         """AE3: the value is used, labelled as the source's, and editable."""
-        self.select_model("transformer")
+        self.select_model("1dCNN_z")
         client = StubClient(rows=[EARLIEST_ROW])
         service = self.build_service(
             client, StubWiserepRepo({"5001": spectrum_for("5001")})
@@ -461,7 +461,7 @@ class RedshiftTests(ClassifyByNameTestCase):
 
     def test_an_edited_redshift_is_used_and_no_longer_attributed(self):
         """R10: a value the researcher typed is theirs, not the source's."""
-        self.select_model("transformer")
+        self.select_model("1dCNN_z")
         client = StubClient(rows=[EARLIEST_ROW])
         service = self.build_service(
             client, StubWiserepRepo({"5001": spectrum_for("5001")})
@@ -475,7 +475,7 @@ class RedshiftTests(ClassifyByNameTestCase):
 
     def test_no_recorded_redshift_leaves_the_field_empty_and_refuses(self):
         """AE4: the existing requirement refuses rather than using zero."""
-        self.select_model("transformer")
+        self.select_model("1dCNN_z")
         client = StubClient(
             rows=[
                 export_row(
@@ -497,7 +497,7 @@ class RedshiftTests(ClassifyByNameTestCase):
 
     def test_the_refusal_is_reported_where_focus_lands(self):
         """The region focus moves to carries the refusal, not nothing."""
-        self.select_model("transformer")
+        self.select_model("1dCNN_z")
         client = StubClient(
             rows=[
                 export_row(
@@ -513,7 +513,7 @@ class RedshiftTests(ClassifyByNameTestCase):
 
     def test_a_second_designation_takes_its_own_recorded_redshift(self):
         """The field still holding the first object's value is not an edit."""
-        self.select_model("transformer")
+        self.select_model("1dCNN_z")
         first_service = self.build_service(
             StubClient(rows=[EARLIEST_ROW]),
             StubWiserepRepo({"5001": spectrum_for("5001")}),
@@ -548,7 +548,7 @@ class RedshiftTests(ClassifyByNameTestCase):
 
     def test_another_epoch_takes_its_own_recorded_redshift(self):
         """The value the previous epoch filled in is not an edit either."""
-        self.select_model("transformer")
+        self.select_model("1dCNN_z")
         service = self.build_service(
             StubClient(rows=[EARLIEST_ROW, LATER_ROW]),
             StubWiserepRepo(
@@ -656,7 +656,7 @@ class RedshiftTests(ClassifyByNameTestCase):
 
     def test_a_required_redshift_model_refuses_rather_than_overriding(self):
         """An opt-out under a model that needs one refuses, as an upload does."""
-        self.select_model("transformer")
+        self.select_model("1dCNN_z")
         client = StubClient(rows=[EARLIEST_ROW])
         service = self.build_service(
             client, StubWiserepRepo({"5001": spectrum_for("5001")})

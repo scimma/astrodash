@@ -8,7 +8,7 @@ If you run into anything unclear, please open an issue or a draft PR so we can h
 
 ## Contribute a New ML Classifier Model
 
-This section explains how to add a first-class model kind (e.g., like `dash` or `transformer`). The goal is to make your model selectable in the UI and callable via the API, with consistent inputs/outputs. Adding a model with this method provides more flexibility for customizing preprocessing, orchestrating inference, and adding more functionality (like templates) than uploading a Torchscripted model via the endpoint.
+This section explains how to add a first-class model kind (e.g., like `dash` or `1dCNN_z`). The goal is to make your model selectable in the UI and callable via the API, with consistent inputs/outputs. Adding a model with this method provides more flexibility for customizing preprocessing, orchestrating inference, and adding more functionality (like templates) than uploading a Torchscripted model via the endpoint.
 
 ### Assumptions
 
@@ -21,7 +21,7 @@ This section explains how to add a first-class model kind (e.g., like `dash` or 
 #### 1. Register the model in the model registry
 
 - Directory: `app/astrodash/infrastructure/ml/model_registry/`
-- Create `definitions/<your_model>.py` defining a `ModelDefinition`. Copy `definitions/dash.py` or `definitions/transformer.py` as a template. A definition declares four separable things:
+- Create `definitions/<your_model>.py` defining a `ModelDefinition`. Copy `definitions/dash.py` or, for a model that takes redshift as a required input, `definitions/oned_cnn_z.py` as a template. A definition declares four separable things:
 
   1. **Identity and presentation.** `id` (which is the `model_type`), the UI card fields (title, description, color, feature tags, icon, recommended), and `preprocessing`.
   2. **Public surface.** `status` (`active` or `retired`), `listed`, `is_default`, and `requires_credential`. These are independent questions — see "Public surface" below.
@@ -64,14 +64,14 @@ Adding a *new* surface is one entry in `SURFACES` plus the id constant — no pe
 - Inherit from `BaseClassifier` and implement:
   - Model loading from `Settings` (path + hyperparams)
   - `.classify(spectrum)` that accepts preprocessed arrays, runs inference on CPU/GPU, and returns a result consistent with existing models
-  - Label mapping (transform logits -> class names) if needed, similar to `TransformerClassifier`
+  - Label mapping (transform logits -> class names) if needed, similar to `OnedCnnClassifier`
 
 - If you need a custom architecture, add it under `app/astrodash/infrastructure/ml/classifiers/architectures.py` (or a sibling module) and instantiate it in your classifier.
 
 #### 3. Add preprocessing (if needed)
 
 - File: `app/astrodash/infrastructure/ml/data_processor.py`
-- Pattern after `DashSpectrumProcessor` or `TransformerSpectrumProcessor`. Ensure the logic mirrors training (interpolation, normalization, shaping).
+- Pattern after `DashSpectrumProcessor` or `OnedCnnSpectrumProcessor`. Ensure the logic mirrors training (interpolation, normalization, shaping).
 - Update: `app/astrodash/domain/services/spectrum_processing_service.py`
   - Set your definition's `preprocessing` identifier, then extend `prepare_for_model(self, spectrum, model_type)` with a matching `elif preprocessing == '<your_variant>'` branch returning exactly the tensors your classifier expects. `prepare_for_model` reads the variant from your definition (`get_definition(model_type).preprocessing`), so it keys on that identifier rather than a raw `model_type` literal.
 
@@ -89,7 +89,7 @@ Adding a *new* surface is one entry in `SURFACES` plus the id constant — no pe
 
 - File: `app/astrodash/config/settings.py`
   - Add env-backed fields for your model path and hyperparameters, e.g. `YOURMODEL_MODEL_PATH`, dims, layers, dropout, etc.
-  - For label mapping (class index -> label), follow the `TransformerClassifier` pattern.
+  - For label mapping (class index -> label), follow the `OnedCnnClassifier` pattern (a class-mapping file path such as `oned_cnn_z_class_mapping_path`).
 
 #### 7. Tests
 
@@ -106,7 +106,7 @@ The AstroDash frontend uses Django templates with Bootstrap, and the model surfa
 
 1. The model-selection cards render from the registry's **listed** definitions (title, description, color, feature tags, icon, recommended badge, order), so setting your definition's UI fields adds the card. The form choice lists are generated from the same listing.
 2. The result tabs render from your `surfaces` list, in the declared order, with the first active.
-3. Redshift controls follow your `redshift_input` policy; RLAP and template-overlay UI follow `supports_rlap` and `supports_template_overlays`. Set the fields rather than adding `'dash'` vs `'transformer'` branches in the template or form — a guard test scans the templates for exactly that.
+3. Redshift controls follow your `redshift_input` policy; RLAP and template-overlay UI follow `supports_rlap` and `supports_template_overlays`. Set the fields rather than adding `'dash'` vs `'1dCNN_z'` branches in the template or form — a guard test scans the templates for exactly that.
 4. Ensure the result display matches your outputs (e.g., a model with `supports_rlap=False` produces no RLAP values to show).
 
 ### Documentation Updates

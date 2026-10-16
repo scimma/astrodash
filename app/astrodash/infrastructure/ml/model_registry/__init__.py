@@ -1,7 +1,8 @@
 """Central declarative registry of the built-in classifier models.
 
-This package is the single source of truth for the built-in classifiers (DASH
-and Transformer). Each model is described once as a :class:`ModelDefinition` in
+This package is the single source of truth for the built-in classifiers (DASH,
+the website_final 1D CNN and latent variants, and the retired Transformer).
+Each model is described once as a :class:`ModelDefinition` in
 its own module under :mod:`.definitions`, carrying its UI card fields, lifecycle
 status, default flag, capability and requirement flags, and a reference to the
 classifier that runs it. Forms, the model-selection template, the classifier
@@ -70,8 +71,9 @@ __all__ = [
 ]
 
 # Ordered registry of built-in classifiers. The order here is the order the
-# cards render on the model-selection page (Transformer first, then DASH,
-# then the website_final 1D CNN and latent variants).
+# cards render on the model-selection page (DASH, then the website_final 1D CNN
+# and latent variants). The retired Transformer stays in the tuple so stored
+# results and stale session selections still resolve it; it renders no card.
 MODELS: Tuple[ModelDefinition, ...] = (
     TRANSFORMER,
     DASH,

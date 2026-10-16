@@ -24,29 +24,57 @@ from django.test import Client, SimpleTestCase
 from django.urls import reverse
 
 from astrodash.infrastructure.ml import model_registry
+from astrodash.tests.gate_fixtures import STAND_IN_DEFAULT
+
+
+def _stand_in_default():
+    """Return the stand-in model promoted to the roster default.
+
+    Each roster below takes DASH -- the shipped default -- out of the default
+    role, so another listed, ungated active model must hold it for the roster
+    to satisfy the registry invariants.
+
+    Returns:
+        The :data:`STAND_IN_DEFAULT` definition with ``is_default=True``.
+    """
+    return replace(model_registry.get_definition(STAND_IN_DEFAULT), is_default=True)
+
+
+def _demoted_dash(**changes):
+    """Return DASH without the default flag, with any further changes applied.
+
+    Args:
+        **changes: Field overrides passed to ``dataclasses.replace``.
+
+    Returns:
+        The modified DASH definition.
+    """
+    return replace(model_registry.get_definition("dash"), is_default=False, **changes)
 
 
 def _gated_roster():
     """Roster where DASH is gated: active, unlisted, credential-required.
 
-    Transformer is left untouched so it remains the listed, ungated active
-    default the registry invariants require.
-
     Returns:
         A ``MODELS``-shaped tuple suitable for ``patch.object``.
     """
-    transformer = model_registry.get_definition("transformer")
-    dash = model_registry.get_definition("dash")
-    return (transformer, replace(dash, listed=False, requires_credential=True))
+    roster = (
+        _stand_in_default(),
+        _demoted_dash(listed=False, requires_credential=True),
+    )
+    model_registry.validate_registry(roster)
+    return roster
 
 
 def _absent_roster():
     """Roster from which DASH is missing entirely, so its id is unknown.
 
     Returns:
-        A ``MODELS``-shaped tuple containing only Transformer.
+        A ``MODELS``-shaped tuple containing only the stand-in default.
     """
-    return (model_registry.get_definition("transformer"),)
+    roster = (_stand_in_default(),)
+    model_registry.validate_registry(roster)
+    return roster
 
 
 def _retired_roster():
@@ -55,9 +83,12 @@ def _retired_roster():
     Returns:
         A ``MODELS``-shaped tuple suitable for ``patch.object``.
     """
-    transformer = model_registry.get_definition("transformer")
-    dash = model_registry.get_definition("dash")
-    return (transformer, replace(dash, status=model_registry.STATUS_RETIRED))
+    roster = (
+        _stand_in_default(),
+        _demoted_dash(status=model_registry.STATUS_RETIRED),
+    )
+    model_registry.validate_registry(roster)
+    return roster
 
 
 def _unlisted_ungated_roster():
@@ -66,9 +97,9 @@ def _unlisted_ungated_roster():
     Returns:
         A ``MODELS``-shaped tuple suitable for ``patch.object``.
     """
-    transformer = model_registry.get_definition("transformer")
-    dash = model_registry.get_definition("dash")
-    return (transformer, replace(dash, listed=False))
+    roster = (_stand_in_default(), _demoted_dash(listed=False))
+    model_registry.validate_registry(roster)
+    return roster
 
 
 def _mock_classification(model_type):
@@ -152,20 +183,22 @@ class ClassifyModelTypeContractTests(SimpleTestCase):
         self.assertEqual(resp.json()["detail"], "Unknown model type: bogus.")
         classification_svc.classify_spectrum.assert_not_called()
 
-    def test_retired_model_type_returns_400(self):
-        """AE3: a retired registry model -> 400, with no edit to views.py."""
-        transformer = model_registry.get_definition("transformer")
-        dash = model_registry.get_definition("dash")
-        patched = (
-            replace(transformer, status=model_registry.STATUS_RETIRED),
-            replace(dash, is_default=True),
+    def test_retired_transformer_returns_400(self):
+        """R4: the shipped roster retires the Transformer, so the API refuses it.
+
+        Runs against the real registry, not a patched roster.
+        """
+        resp, classification_svc = self._post_with_services(
+            {
+                "params": '{"modelType": "transformer"}',
+                "_expected_model_type": "transformer",
+            }
         )
-        with patch.object(model_registry, "MODELS", patched):
-            resp = self._post(data={"params": '{"modelType": "transformer"}'})
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(
             resp.json()["detail"], "Model type transformer is not available."
         )
+        classification_svc.classify_spectrum.assert_not_called()
 
     def test_user_uploaded_literal_without_model_id_returns_400(self):
         """R5 corner case: modelType='user_uploaded' with no model_id -> 400.
@@ -229,33 +262,33 @@ class ClassifyModelTypeContractTests(SimpleTestCase):
 
     # --- unchanged paths (parity) ---
 
-    def test_valid_transformer_classifies_as_today(self):
-        """AE4: active modelType='transformer' reaches the classification service."""
+    def test_valid_dash_classifies_as_today(self):
+        """AE4: active modelType='dash' reaches the classification service."""
         resp, classification_svc = self._post_with_services(
             {
-                "params": '{"modelType": "transformer"}',
-                "_expected_model_type": "transformer",
+                "params": '{"modelType": "dash"}',
+                "_expected_model_type": "dash",
             }
         )
         self.assertEqual(resp.status_code, 200)
         classification_svc.classify_spectrum.assert_called_once()
         self.assertEqual(
             classification_svc.classify_spectrum.call_args.kwargs["model_type"],
-            "transformer",
+            "dash",
         )
         # The resolved model_type is echoed back in the response payload.
-        self.assertEqual(resp.json()["model_type"], "transformer")
+        self.assertEqual(resp.json()["model_type"], "dash")
 
     def test_model_id_wins_over_modeltype_and_routes_to_user_uploaded(self):
         """AE5: a model_id resolves to user_uploaded and takes precedence.
 
         A valid, competing ``modelType`` is supplied alongside the ``model_id``
         to prove ``model_id`` wins -- a regression that consulted ``modelType``
-        first would classify as transformer and fail here.
+        first would classify as dash and fail here.
         """
         resp, classification_svc = self._post_with_services(
             {
-                "params": '{"modelType": "transformer"}',
+                "params": '{"modelType": "dash"}',
                 "model_id": "abc-123",
                 "_expected_model_type": "user_uploaded",
             }
@@ -309,15 +342,9 @@ class BatchModelTypeContractTests(SimpleTestCase):
         self.assertEqual(resp.json()["detail"], "Unknown model type: bogus.")
         batch_svc.process_batch.assert_not_called()
 
-    def test_retired_model_type_returns_400(self):
-        transformer = model_registry.get_definition("transformer")
-        dash = model_registry.get_definition("dash")
-        patched = (
-            replace(transformer, status=model_registry.STATUS_RETIRED),
-            replace(dash, is_default=True),
-        )
-        with patch.object(model_registry, "MODELS", patched):
-            resp, batch_svc = self._post(params='{"modelType": "transformer"}')
+    def test_retired_transformer_returns_400(self):
+        """R4: the batch endpoint refuses the retired Transformer on the real roster."""
+        resp, batch_svc = self._post(params='{"modelType": "transformer"}')
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(
             resp.json()["detail"], "Model type transformer is not available."

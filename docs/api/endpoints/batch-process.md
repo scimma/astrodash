@@ -28,7 +28,7 @@ multipart/form-data
 | `params` | String (JSON) | Yes | Processing parameters as JSON string (see `/process` endpoint). Must include `modelType` unless `model_id` is supplied. |
 
 The `params` JSON must include `modelType` (one of the active built-in model
-ids: `dash`, `transformer`, `1dCNN_z`, `1dCNN_noz`, `latent_z`, `latent_noz`)
+ids: `dash`, `1dCNN_z`, `1dCNN_noz`, `latent_z`, `latent_noz`)
 unless a `model_id` is supplied. An omitted, unknown, or retired `modelType`
 returns `400`, validated against the model registry's active definitions --
 the same contract as `/process`. Redshift rules and label spaces match
@@ -45,7 +45,7 @@ To vary it per spectrum, send `params.zByFilename`, an object keyed by
 filename:
 
 ```json
-{"modelType": "transformer", "zByFilename": {"sn_a.dat": 0.01, "sn_b.dat": 0.02}}
+{"modelType": "1dCNN_z", "zByFilename": {"sn_a.dat": 0.01, "sn_b.dat": 0.02}}
 ```
 
 A zip entry matches on its full archive path first, then on its basename, so

@@ -35,10 +35,10 @@ The `params` parameter accepts a JSON string with the following fields:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `modelType` | String | \- | Classifier to use. **Required** unless `model_id` is supplied. Must be one of the active built-in model ids (`dash`, `transformer`, `1dCNN_z`, `1dCNN_noz`, `latent_z`, `latent_noz`); an omitted, unknown, or retired value returns `400`. The valid values track the model registry, so they change as models are added or retired. See [Built-in models](#built-in-models). |
+| `modelType` | String | \- | Classifier to use. **Required** unless `model_id` is supplied. Must be one of the active built-in model ids (`dash`, `1dCNN_z`, `1dCNN_noz`, `latent_z`, `latent_noz`); an omitted, unknown, or retired value returns `400`. The valid values track the model registry, so they change as models are added or retired. See [Built-in models](#built-in-models). |
 | `objectName` | String | \- | Object designation resolved against WISeREP (e.g., "2002er", "SN2002er", or a survey internal name) |
 | `smoothing` | Integer | 0 | Smoothing parameter |
-| `knownZ` | Boolean | false | Whether redshift is known. Required (with `zValue`) for `transformer`, `1dCNN_z`, and `latent_z`. Not used as a model input for `1dCNN_noz` or `latent_noz`. Optional for `dash`. |
+| `knownZ` | Boolean | false | Whether redshift is known. Required (with `zValue`) for `1dCNN_z` and `latent_z`. Not used as a model input for `1dCNN_noz` or `latent_noz`. Optional for `dash`. |
 | `zValue` | Float | \- | Redshift value (required if `knownZ` is true, and for models that require redshift as an input) |
 | `minWave` | Float | \- | Minimum wavelength in Angstroms |
 | `maxWave` | Float | \- | Maximum wavelength in Angstroms |
@@ -46,18 +46,21 @@ The `params` parameter accepts a JSON string with the following fields:
 
 ### Built-in models
 
-All of the following ids are **public** (listed, ungated). Send them as `params.modelType` the same way as `dash` or `transformer`.
+All of the following ids are **public** (listed, ungated). Send them as `params.modelType` the same way as `dash` or `1dCNN_z`.
 
 | `modelType` | Redshift as input | Labels |
 |-------------|-------------------|--------|
 | `dash` | Optional | DASH type + age-bin templates (for example `Ia-norm` with an `age_bin`) |
-| `transformer` | Required | Transformer class names |
 | `1dCNN_z` | Required | Five classes: `SN Ia`, `SN Ib/c`, `SN II`, `SN IIn`, `SLSN-I` |
 | `1dCNN_noz` | Not an input | Same five classes |
 | `latent_z` | Required | Same five classes |
 | `latent_noz` | Not an input | Same five classes |
 
 `1dCNN_*` and `latent_*` are not the original DASH type+age template stack. They do not return DASH age bins, twins, or RLAP.
+
+The Transformer model (`transformer`) is retired. It is no longer accepted for new
+classifications: sending `modelType=transformer` returns `400` (see
+[Common Errors](#common-errors)).
 
 ## Response
 
