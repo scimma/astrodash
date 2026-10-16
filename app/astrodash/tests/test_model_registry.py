@@ -22,12 +22,11 @@ from astrodash.infrastructure.ml.classifiers.transformer_classifier import (
 
 
 class RegistryOrderingTests(SimpleTestCase):
-    def test_active_definitions_are_transformer_then_dash(self):
+    def test_active_definitions_start_with_dash(self):
         ids = [d.id for d in registry.active_definitions()]
         self.assertEqual(
             ids,
             [
-                "transformer",
                 "dash",
                 "1dCNN_z",
                 "1dCNN_noz",
@@ -36,15 +35,14 @@ class RegistryOrderingTests(SimpleTestCase):
             ],
         )
 
-    def test_default_is_transformer(self):
-        self.assertEqual(registry.default_definition().id, "transformer")
+    def test_default_is_dash(self):
+        self.assertEqual(registry.default_definition().id, "dash")
 
-    def test_listed_definitions_include_dash_transformer_and_website_final(self):
+    def test_listed_definitions_are_dash_and_website_final(self):
         ids = [d.id for d in registry.listed_definitions()]
         self.assertEqual(
             ids,
             [
-                "transformer",
                 "dash",
                 "1dCNN_z",
                 "1dCNN_noz",
@@ -76,7 +74,7 @@ class DefinitionFieldsTests(SimpleTestCase):
         self.assertFalse(tr.supports_template_overlays)
         self.assertFalse(tr.supports_rlap)
         self.assertEqual(tr.preprocessing, "transformer")
-        self.assertTrue(tr.is_default)
+        self.assertFalse(tr.is_default)
         self.assertIs(tr.classifier, TransformerClassifier)
 
     def test_website_final_capability_fields(self):
@@ -108,46 +106,38 @@ class DefinitionFieldsTests(SimpleTestCase):
 
 
 class RetirementTests(SimpleTestCase):
-    """AE5: retiring a model hides it from active surfaces but still resolves it."""
+    """AE5: the retired Transformer is off every active surface but still resolves."""
 
-    def test_retired_model_drops_from_active_but_still_resolves(self):
-        transformer = registry.get_definition("transformer")
-        dash = registry.get_definition("dash")
-        # Retire Transformer and promote DASH to default so the invariant holds.
-        retired_transformer = replace(transformer, status=registry.STATUS_RETIRED)
-        promoted_dash = replace(dash, is_default=True)
-        patched = (retired_transformer, promoted_dash)
-
-        with patch.object(registry, "MODELS", patched):
-            active_ids = [d.id for d in registry.active_definitions()]
-            self.assertEqual(active_ids, ["dash"])
-            self.assertEqual(registry.default_definition().id, "dash")
-            # Still resolvable for label/field lookups by any stored result.
-            still = registry.get_definition("transformer")
-            self.assertIsNotNone(still)
-            self.assertEqual(still.title, "Transformer Model")
-            self.assertFalse(still.is_active)
+    def test_transformer_is_retired_but_still_resolves(self):
+        self.assertNotIn("transformer", [d.id for d in registry.active_definitions()])
+        self.assertNotIn("transformer", [d.id for d in registry.listed_definitions()])
+        # Still resolvable for label/field lookups by any stored result.
+        still = registry.get_definition("transformer")
+        self.assertIsNotNone(still)
+        self.assertEqual(still.title, "Transformer Model")
+        self.assertFalse(still.is_active)
+        self.assertIs(still.classifier, TransformerClassifier)
 
 
 class InvariantTests(SimpleTestCase):
     def test_two_active_defaults_raises(self):
-        transformer = registry.get_definition("transformer")
         dash = registry.get_definition("dash")
-        both_default = (transformer, replace(dash, is_default=True))
+        cnn = registry.get_definition("1dCNN_z")
+        both_default = (dash, replace(cnn, is_default=True))
         with self.assertRaises(ValueError):
             registry.validate_registry(both_default)
 
     def test_zero_active_defaults_raises(self):
-        transformer = registry.get_definition("transformer")
         dash = registry.get_definition("dash")
-        none_default = (replace(transformer, is_default=False), dash)
+        cnn = registry.get_definition("1dCNN_z")
+        none_default = (replace(dash, is_default=False), cnn)
         with self.assertRaises(ValueError):
             registry.validate_registry(none_default)
 
     def test_duplicate_ids_raise(self):
-        transformer = registry.get_definition("transformer")
+        dash = registry.get_definition("dash")
         with self.assertRaises(ValueError):
-            registry.validate_registry((transformer, transformer))
+            registry.validate_registry((dash, dash))
 
     def test_production_registry_is_valid(self):
         # Should not raise.
@@ -155,68 +145,63 @@ class InvariantTests(SimpleTestCase):
 
     def test_gated_and_listed_raises(self):
         """R26: a model requiring a credential may never be listed."""
-        transformer = registry.get_definition("transformer")
         dash = registry.get_definition("dash")
-        gated_but_listed = replace(dash, requires_credential=True, listed=True)
+        cnn = registry.get_definition("1dCNN_z")
+        gated_but_listed = replace(cnn, requires_credential=True, listed=True)
         with self.assertRaises(ValueError) as ctx:
-            registry.validate_registry((transformer, gated_but_listed))
-        self.assertIn("dash", str(ctx.exception))
+            registry.validate_registry((dash, gated_but_listed))
+        self.assertIn("1dCNN_z", str(ctx.exception))
 
     def test_gated_default_raises(self):
         """R26: the active default may never require a credential."""
-        transformer = registry.get_definition("transformer")
-        gated_default = replace(transformer, requires_credential=True, listed=False)
+        dash = registry.get_definition("dash")
+        gated_default = replace(dash, requires_credential=True, listed=False)
         with self.assertRaises(ValueError) as ctx:
             registry.validate_registry((gated_default,))
-        self.assertIn("transformer", str(ctx.exception))
+        self.assertIn("dash", str(ctx.exception))
 
     def test_unlisted_default_raises(self):
         """R26: the active default is always listed."""
-        transformer = registry.get_definition("transformer")
         dash = registry.get_definition("dash")
-        unlisted_default = replace(transformer, listed=False)
+        cnn = registry.get_definition("1dCNN_z")
+        unlisted_default = replace(dash, listed=False)
         with self.assertRaises(ValueError) as ctx:
-            registry.validate_registry((unlisted_default, dash))
-        self.assertIn("transformer", str(ctx.exception))
+            registry.validate_registry((unlisted_default, cnn))
+        self.assertIn("dash", str(ctx.exception))
 
 
 class ListingTests(SimpleTestCase):
     """R1/KD1: listing is independent of lifecycle status."""
 
     def test_unlisted_active_model_drops_from_listed_only(self):
-        transformer = registry.get_definition("transformer")
         dash = registry.get_definition("dash")
-        unlisted_dash = replace(dash, listed=False)
-        patched = (transformer, unlisted_dash)
+        cnn = registry.get_definition("1dCNN_z")
+        unlisted_cnn = replace(cnn, listed=False)
+        patched = (dash, unlisted_cnn)
 
         with patch.object(registry, "MODELS", patched):
             self.assertEqual(
                 [d.id for d in registry.active_definitions()],
-                ["transformer", "dash"],
+                ["dash", "1dCNN_z"],
             )
             self.assertEqual(
                 [d.id for d in registry.listed_definitions()],
-                ["transformer"],
+                ["dash"],
             )
 
     def test_retired_model_drops_from_active_and_listed(self):
-        transformer = registry.get_definition("transformer")
         dash = registry.get_definition("dash")
-        retired_dash = replace(dash, status=registry.STATUS_RETIRED)
-        patched = (transformer, retired_dash)
+        cnn = registry.get_definition("1dCNN_z")
+        retired_cnn = replace(cnn, status=registry.STATUS_RETIRED)
+        patched = (dash, retired_cnn)
 
         with patch.object(registry, "MODELS", patched):
-            self.assertEqual(
-                [d.id for d in registry.active_definitions()], ["transformer"]
-            )
-            self.assertEqual(
-                [d.id for d in registry.listed_definitions()], ["transformer"]
-            )
+            self.assertEqual([d.id for d in registry.active_definitions()], ["dash"])
+            self.assertEqual([d.id for d in registry.listed_definitions()], ["dash"])
 
     def test_builtin_models_are_listed_and_ungated(self):
         for model_id in (
             "dash",
-            "transformer",
             "1dCNN_z",
             "1dCNN_noz",
             "latent_z",
@@ -414,10 +399,10 @@ class GateConfigurationTests(SimpleTestCase):
     """R34/AE13: a gated model with unconfigured gate configuration fails closed."""
 
     def _gated_roster(self):
-        transformer = registry.get_definition("transformer")
         dash = registry.get_definition("dash")
-        gated = replace(dash, requires_credential=True, listed=False)
-        return (transformer, gated)
+        cnn = registry.get_definition("1dCNN_z")
+        gated = replace(cnn, requires_credential=True, listed=False)
+        return (dash, gated)
 
     def _configured_env(self, **overrides):
         env = {
