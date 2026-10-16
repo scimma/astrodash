@@ -3,8 +3,8 @@
 These pin the observable behavior of the built-in models (DASH, the 1D CNN
 and latent variants, and the retired Transformer's resolution) at the form /
 service / view-gate seam -- deliberately without a live model forward pass --
-so the model-registry refactor (U2-U5) can prove it preserved behavior. They must pass on the pre-refactor code and stay green
-through every later unit.
+so the model-registry refactor (U2-U5) can prove it preserved behavior. They
+must pass on the pre-refactor code and stay green through every later unit.
 
 The classification-dependent gates (twins stash, template overlays) are
 exercised by driving the classify view with the spectrum/processing/
@@ -47,6 +47,7 @@ from astrodash.infrastructure.ml.data_processor import (
     LatentEncoderSpectrumProcessor,
     OnedCnnSpectrumProcessor,
 )
+from astrodash.tests.gate_fixtures import promote_stand_in_default
 from astrodash.ui_views import _batch_run_metadata, _format_batch_results
 from astrodash.domain.services.redshift_service import RedshiftService
 from astrodash.domain.services.spectrum_processing_service import (
@@ -128,7 +129,7 @@ class SelectModelPageParityTests(TestCase):
             self.assertIn(f">{tag}</span>", visible)
         for tag in ("1D CNN", "5 Classes", "Redshift Input"):
             self.assertIn(f">{tag}</span>", visible)
-        # The retired Transformer's card text is gone.
+        # No Transformer card text is rendered.
         self.assertNotIn(
             "Advanced transformer-based model with 5-class classification", visible
         )
@@ -136,7 +137,7 @@ class SelectModelPageParityTests(TestCase):
         # DASH's RECOMMENDED badge and flask icon, and only DASH's.
         self.assertEqual(visible.count("RECOMMENDED"), 1)
         self.assertIn("bi-flask", visible)
-        # Order: DASH is now the first card, ahead of the 1D CNN.
+        # Order: DASH precedes the 1D CNN.
         self.assertLess(
             visible.index("onclick=\"selectModel('dash')\""),
             visible.index("onclick=\"selectModel('1dCNN_z')\""),
@@ -168,11 +169,9 @@ class UnlistedModelSurfaceTests(TestCase):
             already checked against :func:`model_registry.validate_registry`
             because patching ``MODELS`` bypasses the import-time check.
         """
-        onedcnn_z = model_registry.get_definition("1dCNN_z")
-        dash = model_registry.get_definition("dash")
-        roster = (
-            replace(dash, listed=False, is_default=False),
-            replace(onedcnn_z, is_default=True),
+        roster = tuple(
+            replace(m, listed=False) if m.id == "dash" else m
+            for m in promote_stand_in_default(model_registry.MODELS, "dash")
         )
         model_registry.validate_registry(roster)
         return roster

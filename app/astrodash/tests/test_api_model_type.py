@@ -24,19 +24,20 @@ from django.test import Client, SimpleTestCase
 from django.urls import reverse
 
 from astrodash.infrastructure.ml import model_registry
+from astrodash.tests.gate_fixtures import STAND_IN_DEFAULT
 
 
 def _stand_in_default():
-    """Return ``1dCNN_z`` promoted to the roster default.
+    """Return the stand-in model promoted to the roster default.
 
     Each roster below takes DASH -- the shipped default -- out of the default
     role, so another listed, ungated active model must hold it for the roster
     to satisfy the registry invariants.
 
     Returns:
-        The ``1dCNN_z`` definition with ``is_default=True``.
+        The :data:`STAND_IN_DEFAULT` definition with ``is_default=True``.
     """
-    return replace(model_registry.get_definition("1dCNN_z"), is_default=True)
+    return replace(model_registry.get_definition(STAND_IN_DEFAULT), is_default=True)
 
 
 def _demoted_dash(**changes):
@@ -69,7 +70,7 @@ def _absent_roster():
     """Roster from which DASH is missing entirely, so its id is unknown.
 
     Returns:
-        A ``MODELS``-shaped tuple containing only ``1dCNN_z``.
+        A ``MODELS``-shaped tuple containing only the stand-in default.
     """
     roster = (_stand_in_default(),)
     model_registry.validate_registry(roster)

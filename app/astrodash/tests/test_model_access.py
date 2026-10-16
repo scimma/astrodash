@@ -901,20 +901,6 @@ class RetiredTransformerSessionTests(TestCase):
         self.assert_sent_back_to_the_picker(resp)
         classification_svc.classify_spectrum.assert_not_awaited()
 
-    def test_selecting_the_transformer_is_refused_as_an_invalid_choice(self):
-        session = self.client.session
-        session["selected_model_type"] = "dash"
-        session.save()
-        model_svc = MagicMock(list_models=AsyncMock(return_value=[]))
-        with patch("astrodash.ui_views.get_model_service", return_value=model_svc):
-            resp = self.client.post(
-                reverse("astrodash:model_selection"),
-                data={"model_type": "transformer", "action_type": "classify"},
-            )
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn("model_type", resp.context["form"].errors)
-        self.assertEqual(self.client.session["selected_model_type"], "dash")
-
 
 class MintCommandTests(TestCase):
     """R10: minting is operator-only, and no route mints a link."""

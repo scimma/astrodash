@@ -57,14 +57,15 @@ def promote_stand_in_default(
     """
     if not any(m.id == displaced and m.is_default for m in models):
         return models
-    return tuple(
-        (
-            replace(m, is_default=False)
-            if m.id == displaced
-            else replace(m, is_default=True) if m.id == STAND_IN_DEFAULT else m
-        )
-        for m in models
-    )
+
+    def _rebind(model: ModelDefinition) -> ModelDefinition:
+        if model.id == displaced:
+            return replace(model, is_default=False)
+        if model.id == STAND_IN_DEFAULT:
+            return replace(model, is_default=True)
+        return model
+
+    return tuple(_rebind(m) for m in models)
 
 
 def gated_roster(model_id: str = "dash") -> Tuple[ModelDefinition, ...]:
