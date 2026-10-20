@@ -187,8 +187,15 @@ def spectral_twins(request):
     the browser fetches from ``TWINS_BUNDLE_URL_PREFIX``. The bundle's
     descriptor is checked here so a missing or unrecognized bundle renders a
     clear state instead of a broken explorer.
+
+    Args:
+        request: The incoming request.
+
+    Returns:
+        The rendered explorer page, or its not-installed or unsupported state.
     """
-    descriptor_path = Path(get_config().daep_twins_bundle_dir) / daep_bundle.DESCRIPTOR_FILENAME
+    bundle_dir = Path(get_config().daep_twins_bundle_dir)
+    descriptor_path = bundle_dir / daep_bundle.DESCRIPTOR_FILENAME
     context = {"bundle_state": "ok", "twins_config": None}
     try:
         descriptor = daep_bundle.read_descriptor(descriptor_path)

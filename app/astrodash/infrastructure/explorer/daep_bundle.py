@@ -24,7 +24,7 @@ import numpy as np
 BUNDLE_SCHEMA = 1
 
 # Per wavelength bin: float32 flux + float32 reconstruction + uint8 mask.
-BIN_BYTES_PER_WAVE = 9
+BIN_BYTES_PER_WAVE = 4 + 4 + 1
 
 PUBLIC_SUBDIR = "daep"
 SERVER_SUBDIR = "daep_server"
@@ -200,11 +200,8 @@ def sha256_file(path: Path) -> str:
     Returns:
         The hex digest.
     """
-    digest = hashlib.sha256()
     with open(path, "rb") as fh:
-        for block in iter(lambda: fh.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
+        return hashlib.file_digest(fh, "sha256").hexdigest()
 
 
 def read_descriptor(path: Path) -> dict[str, Any]:

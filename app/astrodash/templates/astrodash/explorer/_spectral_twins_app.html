@@ -147,6 +147,7 @@ let DATA = null;
 let TYPE_COLORS = null;
 let TYPE_SYMBOLS = null;
 let SN_TO_IDX = null;
+let SORTED_SNS = null;
 const specCache = new Map(); // idx -> Promise<{flux, recon, mask}>
 let activeUpdateToken = 0;
 let CURRENT_SELECTION = null;
@@ -346,11 +347,15 @@ function reconTrace(data, name) {
 
 function normalizeSearch(s) { return String(s || "").trim().toLowerCase(); }
 
+const searchBlobCache = [];
 function searchBlobForIdx(i) {
-  return normalizeSearch([
-    i, DATA.sn[i], DATA.spec_id[i], DATA.obj_type[i], sourceAt(i), instAt(i),
-    DATA.jd[i], DATA.jd_str[i], dateAt(i), DATA.phase[i], DATA.z[i], DATA.hover[i]
-  ].join(" "));
+  if (searchBlobCache[i] === undefined) {
+    searchBlobCache[i] = normalizeSearch([
+      i, DATA.sn[i], DATA.spec_id[i], DATA.obj_type[i], sourceAt(i), instAt(i),
+      DATA.jd[i], DATA.jd_str[i], dateAt(i), DATA.phase[i], DATA.z[i], DATA.hover[i]
+    ].join(" "));
+  }
+  return searchBlobCache[i];
 }
 
 function targetLabel(sn) {
@@ -367,7 +372,7 @@ function targetLabel(sn) {
 
 function getMatchedTargets(query, limit) {
   const q = normalizeSearch(query);
-  const snList = uniqSorted(Object.keys(SN_TO_IDX));
+  const snList = SORTED_SNS;
   const matches = [];
   let exactIdxSN = null;
   if (/^\d+$/.test(q)) {
@@ -588,13 +593,17 @@ function safeFilenamePart(s) {
 
 function downloadSelectedOutputs() {
   if (!CURRENT_SELECTION) { alert("Select a target first."); return; }
+  const withArrays = o => Object.assign({}, o, {
+    flux: Array.from(o.flux),
+    mask: Array.from(o.mask, v => Boolean(v)),
+  });
   const payload = {
     created_at: new Date().toISOString(),
     bundle_id: CONFIG.bundleId,
     note: "Target plus currently overlaid twins. RMSE uses common valid normalized-flux bins.",
     wave_angstrom: Array.from(DATA.wave || []),
-    target: CURRENT_SELECTION.target,
-    twins: CURRENT_SELECTION.twins,
+    target: withArrays(CURRENT_SELECTION.target),
+    twins: CURRENT_SELECTION.twins.map(withArrays),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"});
   const url = URL.createObjectURL(blob);
@@ -753,11 +762,8 @@ async function updateAll(i) {
   renderNeighborTable(i, tableList, rmseByIdx, targetData);
 
   CURRENT_SELECTION = {
-    target: {
-      meta: metaForDownload(i),
-      flux: Array.from(targetData.flux),
-      mask: Array.from(targetData.mask, v => Boolean(v)),
-    },
+    // Typed arrays are kept as-is; the download converts them.
+    target: {meta: metaForDownload(i), flux: targetData.flux, mask: targetData.mask},
     twins: goodTwins.map(o => ({
       rank: o.rank + 1,
       latent_distance: o.distance,
@@ -766,8 +772,8 @@ async function updateAll(i) {
       n_common_bins: o.stats ? o.stats.nCommon : 0,
       common_fraction: o.stats ? o.stats.commonFraction : 0,
       meta: metaForDownload(o.j),
-      flux: Array.from(o.data.flux),
-      mask: Array.from(o.data.mask, v => Boolean(v)),
+      flux: o.data.flux,
+      mask: o.data.mask,
     })),
   };
 
@@ -795,6 +801,7 @@ function init() {
   TYPE_COLORS = buildGlobalTypeColorMap();
   TYPE_SYMBOLS = buildGlobalTypeSymbolMap();
   SN_TO_IDX = buildSnToIdx();
+  SORTED_SNS = uniqSorted(Object.keys(SN_TO_IDX));
 
   const colorBy = $("colorBy");
   CURRENT_COLOR_FIELD = ["raw_type", "canonical_type", "broad_type"].includes(DATA.type_col_used)
@@ -830,7 +837,7 @@ function init() {
     if (CURRENT_METRIC_ENTRIES) renderRMSEPanel(CURRENT_METRIC_ENTRIES.targetIdx, CURRENT_METRIC_ENTRIES.twinEntries);
   });
 
-  const snList = uniqSorted(DATA.sn);
+  const snList = SORTED_SNS;
   populateSnDropdown(snList);
   populateTargetDropdown(getMatchedTargets("", 500));
   if (snList.length > 0) {
@@ -880,19 +887,22 @@ async function loadMetadata() {
   const r = await fetch(META_URL);
   if (!r.ok) throw new Error("metadata request returned " + r.status);
   if (!r.body || !r.body.getReader) return r.json();
+  // Decode as it streams so the 73 MB text is held once, not as chunks plus a copy.
   const reader = r.body.getReader();
-  const chunks = [];
+  const decoder = new TextDecoder();
+  const parts = [];
   let received = 0;
   for (;;) {
     const {done, value} = await reader.read();
     if (done) break;
-    chunks.push(value);
+    parts.push(decoder.decode(value, {stream: true}));
     received += value.length;
     const pct = Math.min(100, Math.round(100 * received / CONFIG.metaBytes));
     $("loadingBar").style.width = pct + "%";
     $("loadingBar").setAttribute("aria-valuenow", String(pct));
   }
-  return JSON.parse(await new Blob(chunks).text());
+  parts.push(decoder.decode());
+  return JSON.parse(parts.join(""));
 }
 
 function checkMetadata() {

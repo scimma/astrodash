@@ -8,6 +8,7 @@ twins service). See docs/admin/updating-data-files.md.
 """
 
 import gzip
+import hashlib
 import json
 import logging
 import shutil
@@ -80,6 +81,17 @@ class Command(BaseCommand):
     def _prepare(
         self, source: Path, out: Path, encoder: str | None, check_rows: int
     ) -> None:
+        """Validate the delivery in ``source`` and write the bundle under ``out``.
+
+        Args:
+            source: Directory holding Henna's delivery.
+            out: Directory to write the public and server-only subdirectories into.
+            encoder: Path to the encoder checkpoint to fingerprint, if any.
+            check_rows: How many rows to check against the stored twin distances.
+
+        Raises:
+            BundleError: If the delivery's files disagree with each other.
+        """
         meta_path = source / bundle.META_FILENAME
         spectra_path = source / bundle.SPECTRA_FILENAME
         meta_bytes = meta_path.read_bytes()
@@ -94,7 +106,7 @@ class Command(BaseCommand):
         rows = np.linspace(0, n - 1, num=min(check_rows, n)).astype(int)
         bundle.check_precomputed_twins(reference, meta, n_tokens, rows)
 
-        bundle_id = bundle.sha256_file(meta_path)
+        bundle_id = hashlib.sha256(meta_bytes).hexdigest()
         public = out / bundle.PUBLIC_SUBDIR
         server = out / bundle.SERVER_SUBDIR
         public.mkdir(parents=True, exist_ok=True)

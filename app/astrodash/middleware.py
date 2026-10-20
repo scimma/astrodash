@@ -23,7 +23,7 @@ TWINS_BUNDLE_URL_PREFIX = "/astrodash/twins-data/"
 class StaticAndTwinsBundleMiddleware(WhiteNoiseMiddleware):
     """WhiteNoise for static files, plus the DAEP twins bundle directory.
 
-    The explorer lazy-loads each spectrum from a 233 MB file with an HTTP Range
+    The explorer lazy-loads each spectrum from a large file with an HTTP Range
     request and treats anything but a 206 as stale data. Django's
     ``FileResponse`` ignores Range, and DEV/PROD have no nginx in front of
     gunicorn, so the bundle is indexed here: WhiteNoise answers single ranges
