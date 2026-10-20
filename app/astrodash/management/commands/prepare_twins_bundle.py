@@ -75,7 +75,7 @@ class Command(BaseCommand):
         out = Path(options["out"])
         try:
             self._prepare(source, out, options["encoder"], options["check_rows"])
-        except (bundle.BundleError, FileNotFoundError, KeyError) as exc:
+        except (bundle.BundleError, FileNotFoundError) as exc:
             raise CommandError(str(exc)) from exc
 
     def _prepare(
@@ -100,6 +100,11 @@ class Command(BaseCommand):
         n = int(meta["N"])
 
         with np.load(source / LATENTS_SOURCE_FILENAME) as npz:
+            for name in ("z", "orig_meta_idx"):
+                if name not in npz.files:
+                    raise bundle.BundleError(
+                        f"{LATENTS_SOURCE_FILENAME} is missing the {name!r} array"
+                    )
             z = bundle.align_latents(npz["z"], npz["orig_meta_idx"], n)
         n_tokens, token_dim = int(z.shape[1]), int(z.shape[2])
         reference = bundle.normalize_tokens(z)

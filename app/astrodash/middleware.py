@@ -4,8 +4,11 @@
 layout and has no caller; this module is the Django one.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 from django.conf import settings as django_settings
-from django.http import JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from pydantic import ValidationError
 from pydantic_settings.sources import SettingsError
 from whitenoise.middleware import WhiteNoiseMiddleware
@@ -34,7 +37,11 @@ class StaticAndTwinsBundleMiddleware(WhiteNoiseMiddleware):
     starts, so a bundle swap needs a pod restart, which a data release brings.
     """
 
-    def __init__(self, get_response=None, settings=django_settings):
+    def __init__(
+        self,
+        get_response: Callable[[HttpRequest], HttpResponse] | None = None,
+        settings: Any = django_settings,
+    ) -> None:
         """Index static files, then the twins bundle directory.
 
         Args:

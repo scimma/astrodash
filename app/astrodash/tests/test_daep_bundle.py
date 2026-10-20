@@ -181,6 +181,58 @@ class PrepareTwinsBundleTests(SimpleTestCase):
             ["bundle.json", "data_meta.json", "data_meta.json.gz", "data_spectra.bin"],
         )
 
+    def test_encoder_hash_is_recorded_when_an_encoder_is_given(self):
+        self._write_source()
+        encoder = self.src / "encoder.pt"
+        encoder.write_bytes(b"weights")
+        call_command(
+            "prepare_twins_bundle",
+            str(self.src),
+            "--out",
+            str(self.out),
+            "--encoder",
+            str(encoder),
+            stdout=io.StringIO(),
+        )
+        descriptor = json.loads((self.out / "daep" / "bundle.json").read_text())
+        self.assertEqual(
+            descriptor["encoder_sha256"], hashlib.sha256(b"weights").hexdigest()
+        )
+
+    def test_encoder_hash_is_null_without_an_encoder(self):
+        self._write_source()
+        self._run()
+        descriptor = json.loads((self.out / "daep" / "bundle.json").read_text())
+        self.assertIsNone(descriptor["encoder_sha256"])
+
+    def test_latent_index_that_is_not_a_permutation_is_rejected(self):
+        self._write_source()
+        np.savez(
+            self.src / "latent_raw_z_best.npz",
+            z=LATENTS,
+            ds_idx=np.arange(N),
+            orig_meta_idx=np.array([0, 0, 1]),
+        )
+        with self.assertRaisesRegex(CommandError, "one-to-one"):
+            self._run()
+
+    def test_missing_latents_file_is_rejected(self):
+        self._write_source()
+        (self.src / "latent_raw_z_best.npz").unlink()
+        with self.assertRaisesRegex(CommandError, "latent_raw_z_best.npz"):
+            self._run()
+
+    def test_latents_file_without_an_index_array_is_rejected(self):
+        self._write_source()
+        np.savez(self.src / "latent_raw_z_best.npz", z=LATENTS)
+        with self.assertRaisesRegex(CommandError, "orig_meta_idx"):
+            self._run()
+
+    def test_metadata_list_of_the_wrong_length_is_rejected(self):
+        self._write_source(meta=_meta(hover=["a", "b"]))
+        with self.assertRaisesRegex(CommandError, "hover.*2 entries"):
+            self._run()
+
 
 class ReadDescriptorTests(SimpleTestCase):
     """The descriptor reader the explorer and twins service share."""
@@ -190,4 +242,21 @@ class ReadDescriptorTests(SimpleTestCase):
             path = Path(tmp) / "bundle.json"
             path.write_text(json.dumps({"schema": daep_bundle.BUNDLE_SCHEMA + 1}))
             with self.assertRaisesRegex(daep_bundle.BundleError, "schema"):
+                daep_bundle.read_descriptor(path)
+
+    def _write(self, tmp, value):
+        path = Path(tmp) / "bundle.json"
+        path.write_text(json.dumps(value))
+        return path
+
+    def test_descriptor_missing_required_fields_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, {"schema": daep_bundle.BUNDLE_SCHEMA})
+            with self.assertRaisesRegex(daep_bundle.BundleError, "bundle_id"):
+                daep_bundle.read_descriptor(path)
+
+    def test_descriptor_that_is_not_an_object_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, [daep_bundle.BUNDLE_SCHEMA])
+            with self.assertRaisesRegex(daep_bundle.BundleError, "JSON object"):
                 daep_bundle.read_descriptor(path)

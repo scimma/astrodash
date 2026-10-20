@@ -70,3 +70,11 @@ class SpectralTwinsPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "format")
         self.assertNotContains(response, TWINS_BUNDLE_URL_PREFIX + "data_meta.json")
+
+    def test_incomplete_descriptor_renders_the_format_error(self):
+        (self.bundle_dir / "bundle.json").write_text(
+            json.dumps({"schema": daep_bundle.BUNDLE_SCHEMA})
+        )
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "format")

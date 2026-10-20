@@ -214,11 +214,24 @@ def read_descriptor(path: Path) -> dict[str, Any]:
         The descriptor.
 
     Raises:
-        BundleError: If the schema is not ``BUNDLE_SCHEMA``.
+        BundleError: If the schema is not ``BUNDLE_SCHEMA`` or a field the
+            explorer relies on is missing or of the wrong type.
     """
     descriptor = json.loads(Path(path).read_text())
+    if not isinstance(descriptor, dict):
+        raise BundleError(f"{DESCRIPTOR_FILENAME} is not a JSON object")
     if descriptor.get("schema") != BUNDLE_SCHEMA:
         raise BundleError(
             f"unsupported bundle schema {descriptor.get('schema')!r}; expected {BUNDLE_SCHEMA}"
+        )
+    files = descriptor.get("files")
+    if (
+        not isinstance(descriptor.get("bundle_id"), str)
+        or not all(isinstance(descriptor.get(k), int) for k in ("N", "K", "W"))
+        or not isinstance(files, dict)
+        or not isinstance(files.get(META_FILENAME), int)
+    ):
+        raise BundleError(
+            f"{DESCRIPTOR_FILENAME} is missing bundle_id, N, K, W, or the metadata size"
         )
     return descriptor

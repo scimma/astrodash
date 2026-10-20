@@ -138,8 +138,9 @@ the client needs to cross-check it.
 "use strict";
 
 const CONFIG = JSON.parse(document.getElementById("twins-config").textContent);
-// The bundle id busts browser caches whenever a new bundle is published, so a
-// mid-session regeneration cannot mix rows from two bundles.
+// The bundle id busts browser caches when a new bundle is published. It does
+// not select a bundle on the server, so a page left open across a release is
+// caught by the spectra file's ETag instead (see prefetchSpectrum).
 const META_URL = CONFIG.metaUrl + "?v=" + encodeURIComponent(CONFIG.bundleId);
 const SPEC_URL = CONFIG.spectraUrl + "?v=" + encodeURIComponent(CONFIG.bundleId);
 
@@ -149,6 +150,7 @@ let TYPE_SYMBOLS = null;
 let SN_TO_IDX = null;
 let SORTED_SNS = null;
 const specCache = new Map(); // idx -> Promise<{flux, recon, mask}>
+let SPEC_ETAG = null; // ETag of the spectra file this page started with
 let activeUpdateToken = 0;
 let CURRENT_SELECTION = null;
 let CURRENT_METRIC_ENTRIES = null;
@@ -674,6 +676,14 @@ function prefetchSpectrum(i) {
       controller.abort();
       throw new Error("the spectra file does not match the loaded metadata");
     }
+    // A release with the same N and W passes the size check, so a changed
+    // file identity is the only sign its rows no longer match this metadata.
+    const etag = r.headers.get("ETag");
+    if (SPEC_ETAG === null) SPEC_ETAG = etag;
+    else if (etag !== SPEC_ETAG) {
+      controller.abort();
+      throw new Error("the spectral twins data was updated since this page loaded");
+    }
     const buf = await r.arrayBuffer();
     return {
       flux: new Float32Array(buf, 0, W),
@@ -716,7 +726,7 @@ async function updateAll(i) {
   const statusEl = $("status");
   statusEl.textContent = "Loading target and twin spectra…";
 
-  const fetchIdx = [i, ...Array.from(new Set(tableList.map(o => o.j)))];
+  const fetchIdx = [i, ...Array.from(new Set([...tableList, ...overlayList].map(o => o.j)))];
   const results = await Promise.allSettled(fetchIdx.map(prefetchSpectrum));
   if (myToken !== activeUpdateToken) return;
 
@@ -866,7 +876,14 @@ function init() {
   });
   obsSel.addEventListener("change", refresh);
   ["excludeSameSN", "uniqueTwinSN", "kInput"].forEach(id => $(id).addEventListener("change", refresh));
-  ["latentN", "specN"].forEach(id => $(id).addEventListener("input", refresh));
+  // Dragging a slider fires many input events; render at most once per frame.
+  let sliderFramePending = false;
+  const refreshOnNextFrame = () => {
+    if (sliderFramePending) return;
+    sliderFramePending = true;
+    requestAnimationFrame(() => { sliderFramePending = false; refresh(); });
+  };
+  ["latentN", "specN"].forEach(id => $(id).addEventListener("input", refreshOnNextFrame));
   colorBy.addEventListener("change", () => {
     CURRENT_COLOR_FIELD = colorBy.value;
     latentBaseTraces = buildBaseLatentTraces();
@@ -911,19 +928,34 @@ function checkMetadata() {
   }
 }
 
+function showLoadFailure(message) {
+  $("loadingPanel").hidden = false;
+  $("controls").hidden = true;
+  $("dashboardGrid").hidden = true;
+  $("loadingText").textContent = message;
+  $("loadingBar").parentElement.hidden = true;
+}
+
 async function boot() {
+  if (typeof Plotly === "undefined") {
+    showLoadFailure("The plotting library could not be loaded, so the explorer cannot start. Check that cdn.plot.ly is not blocked, then reload.");
+    return;
+  }
   try {
     DATA = await loadMetadata();
     checkMetadata();
   } catch (e) {
-    $("loadingText").textContent = "Could not load the spectral twins data (" + e.message + "). Try reloading the page.";
-    $("loadingBar").parentElement.hidden = true;
+    showLoadFailure("Could not load the spectral twins data (" + e.message + "). Try reloading the page.");
     return;
   }
   $("loadingPanel").hidden = true;
   $("controls").hidden = false;
   $("dashboardGrid").hidden = false;
-  init();
+  try {
+    init();
+  } catch (e) {
+    showLoadFailure("The explorer failed to start (" + e.message + "). Try reloading the page.");
+  }
 }
 
 boot();
