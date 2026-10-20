@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     latent_noz_encoder_path: str = Field("/mnt/astrodash-data/pre_trained_models/latent/noz/encoder.pt")
     latent_noz_classifier_path: str = Field("/mnt/astrodash-data/pre_trained_models/latent/noz/classifier.pt")
 
+    # DAEP spectral twins explorer: the browser-facing bundle, served publicly
+    # (see infrastructure/explorer/daep_bundle.py and astrodash/middleware.py).
+    daep_twins_bundle_dir: str = Field("/mnt/astrodash-data/explorer/daep")
+
     # Template and Line List Paths (External data directory)
     # Resolved in model_validator when default path is missing (e.g. dev without /mnt/astrodash-data)
     template_path: str = Field("/mnt/astrodash-data/pre_trained_models/templates/sn_and_host_templates.npz")
