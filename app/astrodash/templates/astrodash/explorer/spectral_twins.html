@@ -1,0 +1,27 @@
+{% extends "astrodash/base.html" %}
+
+{% block title %}Spectral Twins (DAEP) — Astrodash{% endblock %}
+
+{% block content %}
+{# The site footer is fixed to the viewport; the bottom padding lets the last panel scroll clear of it. #}
+<div class="pt-3" style="padding-bottom: 16rem;">
+  <h1 class="h3 mb-1">Spectral Twins (DAEP)</h1>
+  <p class="text-muted mb-3" style="max-width: 52rem;">
+    Explore the latent space of a diffusion autoencoder (DAEP) trained on WISeREP supernova spectra.
+    Pick a spectrum to see its nearest neighbors in that space, their spectra, and the model's reconstructions.
+    Model and data: Henna Abunemeh (UIUC).
+  </p>
+
+  {% if bundle_state == "ok" %}
+    {% include "astrodash/explorer/_spectral_twins_app.html" %}
+  {% elif bundle_state == "missing" %}
+    <div class="alert alert-secondary">
+      The spectral twins data is not installed on this server yet.
+    </div>
+  {% else %}
+    <div class="alert alert-warning">
+      The spectral twins data on this server is in a format this page does not recognize, so the explorer is unavailable.
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
