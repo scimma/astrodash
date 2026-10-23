@@ -1,5 +1,41 @@
 [
   {
+    "path": "explorer/daep/bundle.json",
+    "version_id": "gv.gnwnSQa8k6hPzdtclz0j9jpYxwfs",
+    "etag": "25264a83301606d2e50b80d1cfbece41",
+    "size": 347
+  },
+  {
+    "path": "explorer/daep/data_meta.json",
+    "version_id": "5lWFasdF.EkgBgR5mWHuFvGuQ4B4Oey",
+    "etag": "fab18ba33aa96dfeadc566cf285b4973-5",
+    "size": 72820032
+  },
+  {
+    "path": "explorer/daep/data_meta.json.gz",
+    "version_id": "wbXBNLCVWvDgAuY8qUpelVMrXnT7NYp",
+    "etag": "468a611a14c298392d26b929d1bc0f96-2",
+    "size": 21915260
+  },
+  {
+    "path": "explorer/daep/data_spectra.bin",
+    "version_id": "kvUn8njnV7pq0UCHo1zJGvKfcpQyLZW",
+    "etag": "f1b365d6b3ab87593ba5cbbf7e226f58-14",
+    "size": 233418240
+  },
+  {
+    "path": "explorer/daep_server/reference_index.npz",
+    "version_id": "hVakh8dyIk-qt9UrhuF5z6TrZgITbPp",
+    "etag": "9827b9d298605b909cc3f28b21a97702",
+    "size": 9589468
+  },
+  {
+    "path": "explorer/daep_server/reference_latents.npy",
+    "version_id": "m8TVqi7oUBhYH7Xk.A7VmS-4ZigvA9s",
+    "etag": "4e84a890e7c94949e888c02233adee30-10",
+    "size": 160956544
+  },
+  {
     "path": "explorer/dash_twins_embeddings.npy",
     "version_id": "GBza7deknWWkt5MY9VNObDyW98HawiP",
     "etag": "2b14dc6ba90959f7dbddf89188ecbc58",
