@@ -44,6 +44,8 @@ from astrodash.core.model_access import (
     scoped_flow_refusal,
 )
 from astrodash.surfaces import declared_surfaces
+from astrodash.infrastructure.explorer import daep_bundle
+from astrodash.middleware import TWINS_BUNDLE_URL_PREFIX
 from astrodash.services import (
     get_config,
     get_spectrum_processing_service,
@@ -175,6 +177,44 @@ def leaderboard(request):
         "astrodash/leaderboard.html",
         build_leaderboard_context(request.GET.get("month")),
     )
+
+
+def spectral_twins(request):
+    """Render the public DAEP Spectral Twins explorer.
+
+    The page browses Henna Abunemeh's DAEP latent space of WISeREP spectra:
+    the map, twins, and spectra all come from her precomputed bundle, which
+    the browser fetches from ``TWINS_BUNDLE_URL_PREFIX``. The bundle's
+    descriptor is checked here so a missing or unrecognized bundle renders a
+    clear state instead of a broken explorer.
+
+    Args:
+        request: The incoming request.
+
+    Returns:
+        The rendered explorer page, or its not-installed or unsupported state.
+    """
+    bundle_dir = Path(get_config().daep_twins_bundle_dir)
+    descriptor_path = bundle_dir / daep_bundle.DESCRIPTOR_FILENAME
+    context = {"bundle_state": "ok", "twins_config": None}
+    try:
+        descriptor = daep_bundle.read_descriptor(descriptor_path)
+    except FileNotFoundError:
+        context["bundle_state"] = "missing"
+    except (daep_bundle.BundleError, ValueError) as exc:
+        logger.error("DAEP twins bundle descriptor rejected: %s", exc)
+        context["bundle_state"] = "unsupported"
+    else:
+        prefix = TWINS_BUNDLE_URL_PREFIX
+        context["twins_config"] = {
+            "metaUrl": prefix + daep_bundle.META_FILENAME,
+            "spectraUrl": prefix + daep_bundle.SPECTRA_FILENAME,
+            "bundleId": descriptor["bundle_id"],
+            "N": descriptor["N"],
+            "W": descriptor["W"],
+            "metaBytes": descriptor["files"][daep_bundle.META_FILENAME],
+        }
+    return render(request, "astrodash/explorer/spectral_twins.html", context)
 
 
 @xframe_options_sameorigin

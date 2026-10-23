@@ -96,7 +96,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    # WhiteNoise, extended to serve the DAEP twins bundle; see astrodash/middleware.py.
+    "astrodash.middleware.StaticAndTwinsBundleMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",

@@ -1,16 +1,58 @@
-"""Django middleware for the REST API's error contract.
+"""Django middleware: the REST API's error contract and DAEP bundle serving.
 
 ``core/middleware.py`` is Starlette/FastAPI code left from the pre-Django
 layout and has no caller; this module is the Django one.
 """
 
-from django.http import JsonResponse
+from collections.abc import Callable
+from typing import Any
+
+from django.conf import settings as django_settings
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from pydantic import ValidationError
 from pydantic_settings.sources import SettingsError
+from whitenoise.middleware import WhiteNoiseMiddleware
 
 from astrodash.config.logging import get_logger
+from astrodash.config.settings import get_settings
 
 logger = get_logger(__name__)
+
+# Where the DAEP twins bundle is served. The explorer page builds its data URLs
+# from this prefix.
+TWINS_BUNDLE_URL_PREFIX = "/astrodash/twins-data/"
+
+
+class StaticAndTwinsBundleMiddleware(WhiteNoiseMiddleware):
+    """WhiteNoise for static files, plus the DAEP twins bundle directory.
+
+    The explorer lazy-loads each spectrum from a large file with an HTTP Range
+    request and treats anything but a 206 as stale data. Django's
+    ``FileResponse`` ignores Range, and DEV/PROD have no nginx in front of
+    gunicorn, so the bundle is indexed here: WhiteNoise answers single ranges
+    with 206, sets ETags, and serves the prepared ``.gz`` copy of the metadata
+    to clients that accept gzip.
+
+    Outside autorefresh mode WhiteNoise indexes the directory when the worker
+    starts, so a bundle swap needs a pod restart, which a data release brings.
+    """
+
+    def __init__(
+        self,
+        get_response: Callable[[HttpRequest], HttpResponse] | None = None,
+        settings: Any = django_settings,
+    ) -> None:
+        """Index static files, then the twins bundle directory.
+
+        Args:
+            get_response: The next handler in Django's middleware chain.
+            settings: Django settings, as WhiteNoise expects.
+        """
+        super().__init__(get_response, settings=settings)
+        self.add_files(
+            get_settings().daep_twins_bundle_dir, prefix=TWINS_BUNDLE_URL_PREFIX
+        )
+
 
 # The REST views whose failures are contracted to be JSON. The UI views in
 # ui_views.py render HTML and keep Django's normal error handling.

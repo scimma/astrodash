@@ -19,7 +19,7 @@ missing or have changed.
 |----------|---------------|------------|-------------|
 | Pre-trained models | `init/data/pre_trained_models/` | `/mnt/astrodash-data/pre_trained_models/` | PyTorch models for the DASH, 1D CNN, and latent classifiers, plus the retired Transformer's weights (kept so results it produced still render) |
 | Spectra | `init/data/spectra/` | `/mnt/astrodash-data/spectra/` | JSON spectrum example files |
-| Explorer | `init/data/explorer/` | `/mnt/astrodash-data/explorer/` | Spectral twins embeddings, PCA, and UMAP data |
+| Explorer | `init/data/explorer/` | `/mnt/astrodash-data/explorer/` | Spectral twins embeddings, PCA, and UMAP data; the DAEP twins bundle under `daep/` (see [Publishing a DAEP spectral twins bundle](#publishing-a-daep-spectral-twins-bundle)) |
 | User models | `init/data/user_models/` | `/mnt/astrodash-data/user_models/` | User-uploaded trained models |
 
 ### S3 bucket configuration
@@ -308,3 +308,37 @@ docker exec <app-container-name> python entrypoints/initialize_data.py verify
 
 This checks all local files against the manifest and exits with code 1 if any
 files are missing or have mismatched checksums.
+
+## Publishing a DAEP spectral twins bundle
+
+The Spectral Twins (DAEP) explorer at `/astrodash/twins/` reads a bundle that
+Henna Abunemeh's pipeline generates: `data_meta.json`, `data_spectra.bin`, and
+`latent_raw_z_best.npz` from one training run's output directory. Those files
+carry no format version, so a delivery is never uploaded as-is. Prepare it
+first:
+
+```bash
+docker cp /path/to/delivery/. <app-container-name>:/tmp/delivery/
+docker exec <app-container-name> python manage.py prepare_twins_bundle \
+  /tmp/delivery --out /tmp/twins_bundle \
+  --encoder /mnt/astrodash-data/pre_trained_models/latent/z/encoder.pt
+docker cp <app-container-name>:/tmp/twins_bundle ./twins_bundle
+```
+
+The command checks that the metadata and spectra file agree, that the latents
+reproduce the stored twin distances, and then writes two directories:
+
+| Directory | S3 path | Contents | Served to browsers |
+|-----------|---------|----------|--------------------|
+| `daep/` | `init/data/explorer/daep/` | `bundle.json` (the descriptor the page checks), `data_meta.json`, its `.gz` copy, `data_spectra.bin` | Yes, under `/astrodash/twins-data/` |
+| `daep_server/` | `init/data/explorer/daep_server/` | `reference_latents.npy`, `reference_index.npz` | No |
+
+Upload both with `mc cp --recursive`, then continue from
+[Step 2](#step-2-regenerate-the-manifest). The page and the twins service
+detect a bundle whose files do not match its descriptor, so always upload
+everything one preparation run produced together.
+
+Never replace bundle files on a running deployment's volume without
+restarting the pod. The app indexes the bundle when each worker starts and
+caches file sizes and ETags, so a file swapped underneath it is served with
+stale range headers. A normal release (new image tag) restarts the pod.

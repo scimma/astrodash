@@ -13,6 +13,8 @@ and user-uploaded models.
 - **Multiple classifier models** — DASH CNN, 1D CNN, latent, and user-uploaded
   TorchScript models
 - **Spectral twins explorer** — find similar spectra using embeddings and UMAP
+- **Spectral Twins (DAEP)** — public explorer of a diffusion-autoencoder latent
+  space of WISeREP spectra, with precomputed twins and reconstructions
 - **Redshift estimation** — estimate redshift using DASH templates
 - **REST API** — full API for programmatic access
 
