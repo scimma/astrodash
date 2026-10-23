@@ -134,15 +134,19 @@ Each entry should include the file path, version ID, etag, and size:
 }
 ```
 
-## Step 4: Commit and push the updated manifest
+## Step 4: Commit the updated manifest and merge it
+
+Commit the manifest on a branch, push the branch to your fork, and open a pull
+request against `scimma/astrodash`:
 
 ```bash
+git switch -c chore/<description-of-changes>
 git add app/entrypoints/astrodash-data.json
-git commit -m "feat: update data manifest for <description of changes>"
-git push origin main
+git commit -m "chore: update data manifest for <description of changes>"
+git push <your-fork-remote> chore/<description-of-changes>
 ```
 
-If working on a feature branch, create a pull request and merge to `main`.
+Build the image (Step 5) from the merge commit on `main`.
 
 ## Step 5: Build and push a new container image
 
@@ -151,15 +155,17 @@ built and pushed for the changes to take effect.
 
 ### Option A: Trigger the GitHub Actions workflow
 
-Create and push a new version tag:
+Create a version tag on the merge commit and push it to `scimma/astrodash`
+(the `upstream` remote), where the workflow runs:
 
 ```bash
-git tag dev<N>-v<X.Y.Z>
-git push origin dev<N>-v<X.Y.Z>
+git tag dev<N>-v<X.Y.Z> <merge-commit>
+git push upstream dev<N>-v<X.Y.Z>
 ```
 
 The GitHub Actions workflow will build the image and push it to the GitLab
-Container Registry.
+Container Registry. Its tag filter accepts a single digit after `dev`, so use
+`dev1` to `dev9` for each version; a `dev10-` tag does not build.
 
 ### Option B: Build and push manually
 
