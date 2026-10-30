@@ -68,12 +68,14 @@ from astrodash.infrastructure.storage.wiserep_spectrum_repository import (
 )
 from astrodash.infrastructure.wiserep.client import WiserepUnreachableError
 from astrodash.shared.utils.helpers import sanitize_for_json
+from astrodash.config.settings import get_settings
 from astrodash.config.logging import get_logger
 from asgiref.sync import async_to_sync
 from bokeh.embed import components
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, HoverTool, Span, Label
 import json
+import re
 import base64
 import hashlib
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -768,6 +770,36 @@ def _source_spectrum_id(spectrum) -> str:
     return spectrum_id if isinstance(spectrum_id, str) else ""
 
 
+def _wiserep_object_url(spectrum, record: dict) -> str:
+    """Return the WISeREP page for the object a spectrum was fetched for.
+
+    The candidate record is read first: a spectrum retained before the
+    identifier was kept is served with the ``meta`` it was saved with, while
+    the candidate set resolved since carries the identifier for the same
+    epoch. The identifier is upstream data placed into a link, so it is used
+    only when it is a plain decimal number; anything else, or no identifier at
+    all, links to WISeREP itself.
+
+    Args:
+        spectrum: The spectrum a by-name lookup served.
+        record: The stored candidate record for that spectrum, or an empty
+            mapping when none matched.
+
+    Returns:
+        The object's page under the configured WISeREP origin, or that
+        origin's front page when the object is not known.
+    """
+    base = get_settings().wiserep_base_url.rstrip("/")
+    meta = getattr(spectrum, "meta", None)
+    for object_id in (
+        record.get("object_id"),
+        meta.get("object_id") if isinstance(meta, dict) else None,
+    ):
+        if isinstance(object_id, str) and re.fullmatch(r"[0-9]+", object_id):
+            return f"{base}/object/{object_id}"
+    return f"{base}/"
+
+
 def _spectrum_provenance(spectrum, records: list, requested_id) -> dict:
     """Describe the spectrum a by-name lookup served.
 
@@ -808,6 +840,7 @@ def _spectrum_provenance(spectrum, records: list, requested_id) -> dict:
         "selection_basis": (
             "the epoch you chose" if chosen else "the earliest eligible observation"
         ),
+        "wiserep_url": _wiserep_object_url(spectrum, record),
     }
 
 

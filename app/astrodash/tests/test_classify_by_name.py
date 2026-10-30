@@ -25,6 +25,7 @@ from django.utils import timezone
 from astrodash.domain.models.spectrum import Spectrum
 from astrodash.domain.services.spectrum_service import SpectrumService
 from astrodash.forms import REDSHIFT_REQUIRED_MESSAGE
+from astrodash.infrastructure.ml.model_registry import listed_definitions
 from astrodash.infrastructure.django_repositories import (
     DjangoCandidateSetRepository,
     DjangoSpectrumRepository,
@@ -73,6 +74,7 @@ def export_row(
     quality: str = "",
     public: str = "Y",
     spectrum_type: str = "Object",
+    object_id: str = "",
 ) -> Dict[str, str]:
     """Build one row of a WISeREP spectrum export.
 
@@ -87,6 +89,8 @@ def export_row(
         quality: WISeREP's quality flag.
         public: Whether WISeREP marks the row publicly released.
         spectrum_type: WISeREP's spectrum type.
+        object_id: WISeREP's object identifier; empty for an export that
+            carries none.
 
     Returns:
         The row, keyed by WISeREP's column names.
@@ -105,6 +109,7 @@ def export_row(
         "Ascii file": f"https://www.wiserep.org/system/files/{spectrum_id}.txt",
         "Spec. type": spectrum_type,
         "Spec. quality": quality,
+        "Obj. ID": object_id,
     }
 
 
@@ -112,13 +117,19 @@ EARLIEST_ROW = export_row("5001", "2026-06-25 00:00:00", "2461186.5", "GMOS-S")
 LATER_ROW = export_row("5002", "2026-07-10 00:00:00", "2461201.5", "FLOYDS")
 
 
-def spectrum_for(spectrum_id: str, redshift: Optional[float] = 0.0086) -> Spectrum:
+def spectrum_for(
+    spectrum_id: str,
+    redshift: Optional[float] = 0.0086,
+    object_id: Optional[str] = None,
+) -> Spectrum:
     """Build the spectrum a download of one epoch would return.
 
     Args:
         spectrum_id: WISeREP's identifier for the epoch.
         redshift: The redshift the source recorded, or ``None`` when it
             records none.
+        object_id: WISeREP's object identifier, as the download records it
+            in ``meta``; ``None`` for a spectrum that carries none.
 
     Returns:
         A spectrum carrying the source identity a retained row is keyed by.
@@ -133,6 +144,7 @@ def spectrum_for(spectrum_id: str, redshift: Optional[float] = 0.0086) -> Spectr
         source_spectrum_id=spectrum_id,
         retrieved_at=timezone.now(),
         file_name=f"{spectrum_id}.txt",
+        meta={} if object_id is None else {"object_id": object_id},
     )
 
 
@@ -435,6 +447,119 @@ class SingleObjectLookupTests(ClassifyByNameTestCase):
         self.assertEqual(client.searches, [])
         self.assertEqual(file_repo.reads, ["spectrum.dat"])
         self.assertNotIn("the earliest eligible observation", self.report(response))
+
+
+class WiserepObjectLinkTests(ClassifyByNameTestCase):
+    """The WISeREP links open the object's own page when its id is known."""
+
+    OBJECT_URL = "https://www.wiserep.org/object/1631"
+    TOP_LEVEL_URL = "https://www.wiserep.org/"
+
+    def classify(self, object_id: Optional[str], model_type: str = "1dCNN_z"):
+        """Classify the earliest epoch of an object by name.
+
+        Args:
+            object_id: The object identifier the fetched spectrum carries.
+            model_type: The model to classify with. The default takes the
+                source's redshift, so the redshift note renders too.
+
+        Returns:
+            The response.
+        """
+        self.select_model(model_type)
+        client = StubClient(rows=[EARLIEST_ROW])
+        repo = StubWiserepRepo({"5001": spectrum_for("5001", object_id=object_id)})
+        response, _ = self.submit(self.build_service(client, repo), self.form_payload())
+        return response
+
+    def source_link(self, response) -> str:
+        """Return the target of the result line's WISeREP link."""
+        match = re.search(
+            r'Source: <a href="([^"]*)"[^>]*>WISeREP</a>', self.report(response)
+        )
+        self.assertIsNotNone(match, "the result line carried no WISeREP link")
+        return match.group(1)
+
+    def redshift_note_link(self, response) -> str:
+        """Return the target of the redshift note's WISeREP link."""
+        match = re.search(
+            r'id="redshift-source-note">\s*Redshift from <a href="([^"]*)"',
+            response.content.decode(),
+        )
+        self.assertIsNotNone(match, "the page carried no redshift note link")
+        return match.group(1)
+
+    def test_a_known_object_links_both_places_to_its_page(self):
+        response = self.classify("1631")
+
+        self.assertEqual(self.source_link(response), self.OBJECT_URL)
+        self.assertEqual(self.redshift_note_link(response), self.OBJECT_URL)
+
+    def test_an_unknown_object_links_to_wiserep_itself(self):
+        response = self.classify(None)
+
+        self.assertEqual(self.source_link(response), self.TOP_LEVEL_URL)
+        self.assertEqual(self.redshift_note_link(response), self.TOP_LEVEL_URL)
+
+    def test_an_identifier_that_is_not_a_number_is_not_linked(self):
+        for object_id in ("", "../x", "1631?a=b", "1631/../2", "\u0661\u0662"):
+            with self.subTest(object_id=object_id):
+                response = self.classify(object_id)
+
+                self.assertEqual(self.source_link(response), self.TOP_LEVEL_URL)
+                self.assertEqual(self.redshift_note_link(response), self.TOP_LEVEL_URL)
+
+    def test_a_spectrum_saved_without_the_identifier_takes_its_record_s(self):
+        """A spectrum retained before the identifier existed still links.
+
+        It is served with the ``meta`` it was saved with, but the candidate
+        set resolved since carries the identifier for the same epoch.
+        """
+        self.select_model("1dCNN_z")
+        row = export_row(
+            "5001", "2026-06-25 00:00:00", "2461186.5", "GMOS-S", object_id="1631"
+        )
+        client = StubClient(rows=[row])
+        repo = StubWiserepRepo({"5001": spectrum_for("5001")})
+        response, _ = self.submit(self.build_service(client, repo), self.form_payload())
+
+        self.assertEqual(self.source_link(response), self.OBJECT_URL)
+        self.assertEqual(self.redshift_note_link(response), self.OBJECT_URL)
+
+    def test_the_configured_wiserep_origin_is_used(self):
+        stand_in = MagicMock(wiserep_base_url="https://wiserep.example.org/")
+        with patch("astrodash.ui_views.get_settings", return_value=stand_in):
+            response = self.classify("1631")
+
+        self.assertEqual(
+            self.source_link(response), "https://wiserep.example.org/object/1631"
+        )
+
+    def test_every_listed_model_gets_the_object_link(self):
+        for definition in listed_definitions():
+            with self.subTest(model=definition.id):
+                response = self.classify("1631", model_type=definition.id)
+
+                self.assertEqual(self.source_link(response), self.OBJECT_URL)
+
+    def test_an_overlay_re_render_keeps_the_object_link(self):
+        self.classify("1631")
+
+        response = self.client.get(self.url, {"overlay_apply": "1"})
+
+        self.assertEqual(self.source_link(response), self.OBJECT_URL)
+
+    def test_a_result_held_from_before_the_link_falls_back(self):
+        self.classify("1631")
+        session = self.client.session
+        held = session["classify_spectrum_provenance"]
+        del held["provenance"]["wiserep_url"]
+        session["classify_spectrum_provenance"] = held
+        session.save()
+
+        response = self.client.get(self.url, {"overlay_apply": "1"})
+
+        self.assertEqual(self.source_link(response), self.TOP_LEVEL_URL)
 
 
 class RedshiftTests(ClassifyByNameTestCase):

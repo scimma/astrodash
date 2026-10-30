@@ -106,6 +106,8 @@ class SpectrumCandidate:
         quality: WISeREP's quality flag; often empty.
         redshift: The object's recorded redshift, or ``None``.
         ascii_url: The URL of the ASCII spectrum file.
+        object_id: WISeREP's ``Obj. ID``, which addresses the object's own
+            page; empty when the export carried none.
     """
 
     designation: str
@@ -117,6 +119,7 @@ class SpectrumCandidate:
     quality: str
     redshift: float | None
     ascii_url: str
+    object_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -195,6 +198,7 @@ class _Columns:
             fieldnames: The header names present in the export.
         """
         fields = list(fieldnames)
+        self.object_id = find_column(fields, ("Obj. ID", "Object ID"))
         self.iau_name = find_column(fields, ("IAU name", "IAU name/s", "Name"))
         self.internal_names = find_column(
             fields, ("Internal name/s", "Internal name", "Internal names")
@@ -322,6 +326,7 @@ def _candidate(columns: _Columns, row: Mapping[str, str]) -> SpectrumCandidate:
         quality=columns.value(row, columns.quality),
         redshift=_parse_float(columns.value(row, columns.redshift)),
         ascii_url=columns.value(row, columns.ascii_file),
+        object_id=columns.value(row, columns.object_id),
     )
 
 

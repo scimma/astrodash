@@ -47,7 +47,11 @@ from astrodash.core.exceptions import (
 from astrodash.domain.models.spectrum import Spectrum
 from astrodash.domain.repositories.spectrum_repository import RetainedSpectrumStore
 from astrodash.domain.services import spectrum_service as service_module
-from astrodash.domain.services.spectrum_service import SpectrumService
+from astrodash.domain.services.spectrum_service import (
+    SpectrumService,
+    candidate_from_record,
+    candidate_to_record,
+)
 from astrodash.infrastructure.db_threads import run_db_work
 from astrodash.infrastructure.django_repositories import (
     DjangoCandidateSetRepository,
@@ -68,7 +72,10 @@ from astrodash.infrastructure.wiserep.parsing import (
     parse_csv_rows,
 )
 from astrodash.models import SOURCE_NAME_WISEREP, SpectrumRecord
-from astrodash.infrastructure.wiserep.selection import normalize_designation
+from astrodash.infrastructure.wiserep.selection import (
+    SpectrumCandidate,
+    normalize_designation,
+)
 
 #: The designation submitted throughout, and the object WISeREP spells it as.
 SUBMITTED_NAME = "SN2002er"
@@ -908,6 +915,38 @@ LATER_EXPORT_ROW = export_row(
         "JD": "2452527.5",
     }
 )
+
+
+class CandidateRecordTests(SimpleTestCase):
+    """A ranked candidate survives the stored candidate set's mapping."""
+
+    def test_object_identifier_round_trips(self) -> None:
+        chosen = SpectrumCandidate(
+            designation="SN 2011fe",
+            spectrum_id="5209",
+            observation_date="2011-08-25 00:00:00.00",
+            julian_date=2455798.5,
+            telescope="Lick-3m",
+            instrument="Kast",
+            quality="",
+            redshift=0.000804,
+            ascii_url="https://www.wiserep.org/system/files/uploaded/a.dat",
+            object_id="1631",
+        )
+
+        rebuilt = candidate_from_record(candidate_to_record(chosen))
+
+        self.assertEqual(rebuilt, chosen)
+
+    def test_a_set_stored_before_the_identifier_reads_as_empty(self) -> None:
+        legacy = {
+            "designation": "SN 2011fe",
+            "source_spectrum_id": "5209",
+            "julian_date": 2455798.5,
+            "download_url": "https://www.wiserep.org/system/files/uploaded/a.dat",
+        }
+
+        self.assertEqual(candidate_from_record(legacy).object_id, "")
 
 
 @override_settings(CACHES=LOCMEM_CACHE)
