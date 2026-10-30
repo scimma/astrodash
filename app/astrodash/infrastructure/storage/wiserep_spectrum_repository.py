@@ -356,6 +356,7 @@ class WiserepSpectrumRepository(SpectrumRepository):
                 "telescope": candidate.telescope,
                 "instrument": candidate.instrument,
                 "ascii_url": url,
+                "object_id": candidate.object_id,
             },
         )
 

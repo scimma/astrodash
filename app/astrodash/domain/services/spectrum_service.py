@@ -266,6 +266,7 @@ def candidate_to_record(candidate: SpectrumCandidate) -> Dict[str, Any]:
         "quality": candidate.quality,
         "redshift": candidate.redshift,
         "download_url": candidate.ascii_url,
+        "object_id": candidate.object_id,
     }
 
 
@@ -289,6 +290,7 @@ def candidate_from_record(record: Mapping[str, Any]) -> SpectrumCandidate:
         quality=record.get("quality", ""),
         redshift=record.get("redshift"),
         ascii_url=record.get("download_url", ""),
+        object_id=record.get("object_id", ""),
     )
 
 

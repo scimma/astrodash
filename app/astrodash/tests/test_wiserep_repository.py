@@ -244,6 +244,7 @@ class RealSpectrumTests(SimpleTestCase):
         self.assertEqual(spectrum.source_name, SOURCE_NAME_WISEREP)
         self.assertIsNotNone(spectrum.retrieved_at)
         self.assertEqual(spectrum.meta["ascii_url"], chosen.ascii_url)
+        self.assertEqual(spectrum.meta["object_id"], "30927")
 
 
 class ReaderDispatchTests(SimpleTestCase):
