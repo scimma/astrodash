@@ -770,15 +770,20 @@ def _source_spectrum_id(spectrum) -> str:
     return spectrum_id if isinstance(spectrum_id, str) else ""
 
 
-def _wiserep_object_url(spectrum) -> str:
+def _wiserep_object_url(spectrum, record: dict) -> str:
     """Return the WISeREP page for the object a spectrum was fetched for.
 
-    The identifier is upstream data placed into a link, so it is used only
-    when it is a plain decimal number; anything else, or no identifier at all,
-    links to WISeREP itself.
+    The candidate record is read first: a spectrum retained before the
+    identifier was kept is served with the ``meta`` it was saved with, while
+    the candidate set resolved since carries the identifier for the same
+    epoch. The identifier is upstream data placed into a link, so it is used
+    only when it is a plain decimal number; anything else, or no identifier at
+    all, links to WISeREP itself.
 
     Args:
         spectrum: The spectrum a by-name lookup served.
+        record: The stored candidate record for that spectrum, or an empty
+            mapping when none matched.
 
     Returns:
         The object's page under the configured WISeREP origin, or that
@@ -786,9 +791,12 @@ def _wiserep_object_url(spectrum) -> str:
     """
     base = get_settings().wiserep_base_url.rstrip("/")
     meta = getattr(spectrum, "meta", None)
-    object_id = meta.get("object_id") if isinstance(meta, dict) else None
-    if isinstance(object_id, str) and re.fullmatch(r"[0-9]+", object_id):
-        return f"{base}/object/{object_id}"
+    for object_id in (
+        record.get("object_id"),
+        meta.get("object_id") if isinstance(meta, dict) else None,
+    ):
+        if isinstance(object_id, str) and re.fullmatch(r"[0-9]+", object_id):
+            return f"{base}/object/{object_id}"
     return f"{base}/"
 
 
@@ -832,7 +840,7 @@ def _spectrum_provenance(spectrum, records: list, requested_id) -> dict:
         "selection_basis": (
             "the epoch you chose" if chosen else "the earliest eligible observation"
         ),
-        "wiserep_url": _wiserep_object_url(spectrum),
+        "wiserep_url": _wiserep_object_url(spectrum, record),
     }
 
 

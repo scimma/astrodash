@@ -74,6 +74,7 @@ def export_row(
     quality: str = "",
     public: str = "Y",
     spectrum_type: str = "Object",
+    object_id: str = "",
 ) -> Dict[str, str]:
     """Build one row of a WISeREP spectrum export.
 
@@ -88,6 +89,8 @@ def export_row(
         quality: WISeREP's quality flag.
         public: Whether WISeREP marks the row publicly released.
         spectrum_type: WISeREP's spectrum type.
+        object_id: WISeREP's object identifier; empty for an export that
+            carries none.
 
     Returns:
         The row, keyed by WISeREP's column names.
@@ -106,6 +109,7 @@ def export_row(
         "Ascii file": f"https://www.wiserep.org/system/files/{spectrum_id}.txt",
         "Spec. type": spectrum_type,
         "Spec. quality": quality,
+        "Obj. ID": object_id,
     }
 
 
@@ -504,6 +508,23 @@ class WiserepObjectLinkTests(ClassifyByNameTestCase):
 
                 self.assertEqual(self.source_link(response), self.TOP_LEVEL_URL)
                 self.assertEqual(self.redshift_note_link(response), self.TOP_LEVEL_URL)
+
+    def test_a_spectrum_saved_without_the_identifier_takes_its_record_s(self):
+        """A spectrum retained before the identifier existed still links.
+
+        It is served with the ``meta`` it was saved with, but the candidate
+        set resolved since carries the identifier for the same epoch.
+        """
+        self.select_model("1dCNN_z")
+        row = export_row(
+            "5001", "2026-06-25 00:00:00", "2461186.5", "GMOS-S", object_id="1631"
+        )
+        client = StubClient(rows=[row])
+        repo = StubWiserepRepo({"5001": spectrum_for("5001")})
+        response, _ = self.submit(self.build_service(client, repo), self.form_payload())
+
+        self.assertEqual(self.source_link(response), self.OBJECT_URL)
+        self.assertEqual(self.redshift_note_link(response), self.OBJECT_URL)
 
     def test_the_configured_wiserep_origin_is_used(self):
         stand_in = MagicMock(wiserep_base_url="https://wiserep.example.org/")
