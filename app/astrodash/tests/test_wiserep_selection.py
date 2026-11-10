@@ -19,6 +19,7 @@ from astrodash.infrastructure.wiserep.selection import (
 
 # Every column the selection reads, spelled as WISeREP spells it.
 COLUMNS = (
+    "Obj. ID",
     "IAU name",
     "Internal name/s",
     "Obj. Type",
@@ -46,6 +47,7 @@ def row(**overrides: str) -> dict[str, str]:
         public ``Object`` spectrum of ``SN 2002er``.
     """
     values = {
+        "Obj. ID": "1052",
         "IAU name": "SN 2002er",
         "Internal name/s": "",
         "Obj. Type": "SN Ia",
@@ -219,6 +221,24 @@ class EligibilityTests(SimpleTestCase):
         self.assertEqual(result.refusal, RefusalReason.NO_ELIGIBLE_SPECTRUM)
         self.assertEqual(result.candidates, ())
         self.assertIsNone(result.selected)
+
+
+class ObjectIdentifierTests(SimpleTestCase):
+    """WISeREP's object identifier, which addresses the object's own page."""
+
+    def test_candidate_carries_the_object_identifier(self) -> None:
+        result = rank_candidates([row(**{"Obj. ID": "1631"})], "2002er")
+
+        self.assertEqual(result.selected.object_id, "1631")
+
+    def test_export_without_the_column_leaves_it_empty(self) -> None:
+        bare = {key: value for key, value in row().items() if key != "Obj. ID"}
+
+        result = rank_candidates([bare], "2002er")
+
+        self.assertIsNone(result.refusal)
+        self.assertEqual(result.selected.spectrum_id, "15319")
+        self.assertEqual(result.selected.object_id, "")
 
 
 class SubstringMatchTests(SimpleTestCase):

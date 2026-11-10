@@ -77,6 +77,15 @@ class SpectrumRetentionTests(TestCase):
         self.assertEqual(read_back.source_spectrum_id, "12345")
         self.assertEqual(read_back.retrieved_at, retrieved_at)
 
+    def test_retained_spectrum_keeps_the_source_object_identifier(self):
+        """The object identifier travels in ``meta`` and survives retention."""
+        saved = self.repo.save(_spectrum(meta={"object_id": "1631"}))
+
+        found = self.repo.get_by_designation_and_spectrum_id("SN2002er", "12345")
+
+        self.assertEqual(found.id, saved.id)
+        self.assertEqual(found.meta["object_id"], "1631")
+
     def test_two_epochs_of_one_designation_both_persist(self):
         first = self.repo.save(_spectrum(source_spectrum_id="12345"))
         second = self.repo.save(_spectrum(source_spectrum_id="67890", y=[0.1] * 4))

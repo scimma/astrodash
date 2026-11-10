@@ -137,7 +137,7 @@
                             {{ form.redshift|as_crispy_field }}
                             {% if redshift_from_source %}
                             <small class="form-text text-muted" id="redshift-source-note">
-                                Redshift from <a href="https://www.wiserep.org/" target="_blank" rel="noopener noreferrer">WISeREP</a>
+                                Redshift from <a href="{{ spectrum_provenance.wiserep_url|default:'https://www.wiserep.org/' }}" target="_blank" rel="noopener noreferrer">WISeREP</a>
                                 for {{ spectrum_provenance.designation }}. Edit it to use your own value.
                             </small>
                             {% endif %}
@@ -205,7 +205,7 @@
                     <p class="mb-0 small text-muted">
                         Chosen as {{ spectrum_provenance.selection_basis }}.
                         {% if spectrum_provenance.retrieved_at %}Retrieved {{ spectrum_provenance.retrieved_at }}.{% endif %}
-                        Source: <a href="https://www.wiserep.org/" target="_blank" rel="noopener noreferrer">WISeREP</a>.
+                        Source: <a href="{{ spectrum_provenance.wiserep_url|default:'https://www.wiserep.org/' }}" target="_blank" rel="noopener noreferrer">WISeREP</a>.
                     </p>
                 </div>
                 {% endif %}
