@@ -89,10 +89,11 @@ def verify_data_integrity(download=False):
         log_msg = f'Comparing "{file_path}"... {checksum_match}'
         if checksum_match:
             logger.debug(log_msg)
-        else:
+        elif not download:
             logger.error(log_msg)
-            if not download:
-                sys.exit(1)
+            sys.exit(1)
+        else:
+            logger.warning(f'Local copy of "{bucket_path}" is out of date; re-downloading it.')
             logger.info(f'Re-downloading file "{bucket_path}"... ({idx + 1}/{total_files})')
             s3_init.download_object(
                 path=os.path.join('init/data', bucket_path),
