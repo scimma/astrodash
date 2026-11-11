@@ -10,6 +10,15 @@ SOURCE_NAME_CATALOGUE = "osc"
 SOURCE_NAME_WISEREP = "wiserep"
 
 
+def new_spectrum_record_id() -> str:
+    """Return a fresh primary key for a ``SpectrumRecord``.
+
+    Returns:
+        A random UUID4 as a string.
+    """
+    return str(uuid.uuid4())
+
+
 class SpectrumRecord(models.Model):
     """Persisted snapshot of a processed spectrum.
 
@@ -19,7 +28,9 @@ class SpectrumRecord(models.Model):
     doubles as the time the spectrum was retrieved from its source.
     """
 
-    id = models.CharField(primary_key=True, max_length=64, default=lambda: str(uuid.uuid4()), editable=False)
+    id = models.CharField(
+        primary_key=True, max_length=64, default=new_spectrum_record_id, editable=False
+    )
     object_designation = models.CharField(
         max_length=128, blank=True, null=True, db_index=True
     )
