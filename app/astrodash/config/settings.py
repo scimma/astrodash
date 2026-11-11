@@ -128,6 +128,17 @@ class Settings(BaseSettings):
     # DAEP spectral twins explorer: the browser-facing bundle, served publicly
     # (see infrastructure/explorer/daep_bundle.py and astrodash/middleware.py).
     daep_twins_bundle_dir: str = Field("/mnt/astrodash-data/explorer/daep")
+    # The explorer's other datasets, each a bundle laid out like daep/, and the
+    # literature-phase catalog shared by all of them.
+    daep_twins_observer_frame_dir: str = Field(
+        "/mnt/astrodash-data/explorer/daep_observer_frame"
+    )
+    daep_twins_multi_object_dir: str = Field(
+        "/mnt/astrodash-data/explorer/daep_multi_object"
+    )
+    daep_twins_literature_dir: str = Field(
+        "/mnt/astrodash-data/explorer/daep_literature"
+    )
 
     # Template and Line List Paths (External data directory)
     # Resolved in model_validator when default path is missing (e.g. dev without /mnt/astrodash-data)

@@ -17,6 +17,32 @@ from astrodash.middleware import TWINS_BUNDLE_URL_PREFIX
 
 SPECTRA = bytes(range(256)) * 4  # 1024 bytes with distinct values
 META = b'{"N": 1}' * 100
+CATALOG = b'{"sn2011fe|2011-08-25 00:00:00": [-16.0, "", "", ""]}' * 20
+
+
+def client_serving(
+    test,
+    bundle_dir,
+    observer_frame_dir=None,
+    multi_object_dir=None,
+    literature_dir=None,
+):
+    """Return a client whose middleware serves the given directories.
+
+    Directories left unset point at paths that do not exist.
+    """
+    absent = Path(bundle_dir).parent / "absent"
+    settings = SimpleNamespace(
+        daep_twins_bundle_dir=str(bundle_dir),
+        daep_twins_observer_frame_dir=str(observer_frame_dir or absent),
+        daep_twins_multi_object_dir=str(multi_object_dir or absent),
+        daep_twins_literature_dir=str(literature_dir or absent),
+    )
+    patcher = patch("astrodash.middleware.get_settings", return_value=settings)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    # A fresh Client builds a fresh middleware chain, which reads the settings.
+    return Client()
 
 
 class TwinsBundleServingTests(SimpleTestCase):
@@ -33,12 +59,7 @@ class TwinsBundleServingTests(SimpleTestCase):
         self.client = self._client_for(self.bundle_dir)
 
     def _client_for(self, bundle_dir):
-        settings = SimpleNamespace(daep_twins_bundle_dir=str(bundle_dir))
-        patcher = patch("astrodash.middleware.get_settings", return_value=settings)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        # A fresh Client builds a fresh middleware chain, which reads the setting.
-        return Client()
+        return client_serving(self, bundle_dir)
 
     def _url(self, name):
         return TWINS_BUNDLE_URL_PREFIX + name
@@ -85,3 +106,81 @@ class TwinsBundleServingTests(SimpleTestCase):
         self.assertEqual(response.status_code, 404)
         response = self.client.get(self._url("../reference_latents.npy"))
         self.assertEqual(response.status_code, 404)
+
+
+class TwinsDatasetServingTests(SimpleTestCase):
+    """Each extra dataset and the literature catalog get their own URL prefix."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.rest_dir = self._bundle(root / "daep", SPECTRA)
+        self.observer_dir = self._bundle(root / "daep_observer_frame", SPECTRA[::-1])
+        self.multi_dir = self._bundle(root / "daep_multi_object", SPECTRA[:512])
+        self.literature_dir = root / "daep_literature"
+        self.literature_dir.mkdir()
+        (self.literature_dir / "literature_phases.json").write_bytes(CATALOG)
+        (self.literature_dir / "literature_phases.json.gz").write_bytes(
+            gzip.compress(CATALOG)
+        )
+
+    @staticmethod
+    def _bundle(directory, spectra):
+        directory.mkdir()
+        (directory / "data_spectra.bin").write_bytes(spectra)
+        (directory / "data_meta.json").write_bytes(META)
+        return directory
+
+    def _client(self, **overrides):
+        dirs = {
+            "observer_frame_dir": self.observer_dir,
+            "multi_object_dir": self.multi_dir,
+            "literature_dir": self.literature_dir,
+        }
+        dirs.update(overrides)
+        return client_serving(self, self.rest_dir, **dirs)
+
+    def test_observer_frame_bundle_answers_ranges_under_its_own_prefix(self):
+        response = self._client().get(
+            TWINS_BUNDLE_URL_PREFIX + "observer_frame/data_spectra.bin",
+            HTTP_RANGE="bytes=0-35",
+        )
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(b"".join(response.streaming_content), SPECTRA[::-1][:36])
+
+    def test_multi_object_bundle_is_served_only_under_its_own_prefix(self):
+        client = self._client()
+        response = client.get(
+            TWINS_BUNDLE_URL_PREFIX + "multi_object_rest/data_spectra.bin"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), SPECTRA[:512])
+        # The observer-frame prefix serves the observer-frame file, not this one.
+        response = client.get(
+            TWINS_BUNDLE_URL_PREFIX + "observer_frame/data_spectra.bin"
+        )
+        self.assertEqual(b"".join(response.streaming_content), SPECTRA[::-1])
+
+    def test_rest_frame_bundle_stays_at_the_bare_prefix(self):
+        response = self._client().get(TWINS_BUNDLE_URL_PREFIX + "data_spectra.bin")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), SPECTRA)
+
+    def test_missing_dataset_directory_404s_without_affecting_the_others(self):
+        client = self._client(observer_frame_dir=self.rest_dir.parent / "gone")
+        response = client.get(
+            TWINS_BUNDLE_URL_PREFIX + "observer_frame/data_spectra.bin"
+        )
+        self.assertEqual(response.status_code, 404)
+        response = client.get(TWINS_BUNDLE_URL_PREFIX + "data_spectra.bin")
+        self.assertEqual(response.status_code, 200)
+
+    def test_literature_catalog_is_served_gzipped_to_clients_that_accept_it(self):
+        response = self._client().get(
+            TWINS_BUNDLE_URL_PREFIX + "literature/literature_phases.json",
+            HTTP_ACCEPT_ENCODING="gzip",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Encoding"], "gzip")
+        self.assertEqual(gzip.decompress(b"".join(response.streaming_content)), CATALOG)

@@ -19,7 +19,7 @@ missing or have changed.
 |----------|---------------|------------|-------------|
 | Pre-trained models | `init/data/pre_trained_models/` | `/mnt/astrodash-data/pre_trained_models/` | PyTorch models for the DASH, 1D CNN, and latent classifiers, plus the retired Transformer's weights (kept so results it produced still render) |
 | Spectra | `init/data/spectra/` | `/mnt/astrodash-data/spectra/` | JSON spectrum example files |
-| Explorer | `init/data/explorer/` | `/mnt/astrodash-data/explorer/` | Spectral twins embeddings, PCA, and UMAP data; the DAEP twins bundle under `daep/` (see [Publishing a DAEP spectral twins bundle](#publishing-a-daep-spectral-twins-bundle)) |
+| Explorer | `init/data/explorer/` | `/mnt/astrodash-data/explorer/` | Spectral twins embeddings, PCA, and UMAP data; the DAEP twins bundles under `daep/`, `daep_observer_frame/` and `daep_multi_object/`, and the literature-phase catalog under `daep_literature/` (see [Publishing a DAEP spectral twins bundle](#publishing-a-daep-spectral-twins-bundle)) |
 | User models | `init/data/user_models/` | `/mnt/astrodash-data/user_models/` | User-uploaded trained models |
 
 ### S3 bucket configuration
@@ -343,6 +343,41 @@ Upload both with `mc cp --recursive`, then continue from
 [Step 2](#step-2-regenerate-the-manifest). The page and the twins service
 detect a bundle whose files do not match its descriptor, so always upload
 everything one preparation run produced together.
+
+### The explorer's datasets
+
+The explorer offers three datasets, chosen with the page's `dataset` query
+parameter. Each is a bundle prepared as above, with its own directory,
+setting and URL prefix:
+
+| Dataset (`?dataset=`) | S3 path | Setting (`ASTRODASH_` env var) | Served under |
+|-----------------------|---------|--------------------------------|--------------|
+| Rest-Frame DAEP (`rest_frame`, the default) | `init/data/explorer/daep/` | `DAEP_TWINS_BUNDLE_DIR` | `/astrodash/twins-data/` |
+| Observer-Frame DAEP (`observer_frame`) | `init/data/explorer/daep_observer_frame/` | `DAEP_TWINS_OBSERVER_FRAME_DIR` | `/astrodash/twins-data/observer_frame/` |
+| Multi-Object DAEP (`multi_object_rest`) | `init/data/explorer/daep_multi_object/` | `DAEP_TWINS_MULTI_OBJECT_DIR` | `/astrodash/twins-data/multi_object_rest/` |
+
+Only the rest-frame dataset needs `daep_server/`: server-side twin search uses
+the rest-frame latents. For the other two, upload only the browser-facing
+directory the command writes, and leave out `--encoder` when no encoder
+checkpoint came with the delivery. A dataset whose files are missing is shown
+in the selector as "(data missing)".
+
+### The literature-phase catalog
+
+The explorer's literature-phase column comes from `literature_phases.json`, a
+JSON object keyed by normalized object name and observation time, each value
+`[phase_days, source_url, citation, doi]`. It is shared by all datasets and is
+optional: without it the column reads N/A. Publish it with a gzip copy beside
+it, which browsers that accept gzip receive instead:
+
+```bash
+gzip -9 -n -k literature_phases.json
+mc cp literature_phases.json literature_phases.json.gz \
+  js-blast/astrodash/init/data/explorer/daep_literature/
+```
+
+The catalog is installed like any other data file, so an update also follows
+the manifest-plus-image path from [Step 2](#step-2-regenerate-the-manifest).
 
 Never replace bundle files on a running deployment's volume without
 restarting the pod. The app indexes the bundle when each worker starts and

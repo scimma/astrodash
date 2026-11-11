@@ -24,6 +24,66 @@
     "size": 233418240
   },
   {
+    "path": "explorer/daep_literature/literature_phases.json",
+    "version_id": "QwFoMi0I5O9E7AYYCUJllL1I4r1vYZh",
+    "etag": "3544d413f0bc85fa5c95337523a1e8da",
+    "size": 1339176
+  },
+  {
+    "path": "explorer/daep_literature/literature_phases.json.gz",
+    "version_id": "wdqmLUMJCtaBw4Q5nSTCrGmAr-Xj09e",
+    "etag": "bed05178bfc354a21098e489bc97fe1b",
+    "size": 59994
+  },
+  {
+    "path": "explorer/daep_multi_object/bundle.json",
+    "version_id": "ZBhw-4BGmdeHFckSSao53q6idvBYtkW",
+    "etag": "f16eca56ac1ff0b6a5be3fc557aa33f5",
+    "size": 285
+  },
+  {
+    "path": "explorer/daep_multi_object/data_meta.json",
+    "version_id": "o1.M2ui7IiTVGjJNVLHq0oNbyC8Vf.T",
+    "etag": "b3889e1e6bad6f3288eb3daa109714da-5",
+    "size": 79698711
+  },
+  {
+    "path": "explorer/daep_multi_object/data_meta.json.gz",
+    "version_id": "gnKfcJLH-k-n87hPh2MoARNRxHf3som",
+    "etag": "c5e758da842a347cf1cbc83be22e2956-2",
+    "size": 25105405
+  },
+  {
+    "path": "explorer/daep_multi_object/data_spectra.bin",
+    "version_id": "-18tdPudIlwqO--wfUcZ7sEbfuNwizb",
+    "etag": "60bde4d4d15b43dc2f9e822ab983a662-16",
+    "size": 256394160
+  },
+  {
+    "path": "explorer/daep_observer_frame/bundle.json",
+    "version_id": "BStJWUE.fcQkwGGeJtkk76Y9Liwl4f5",
+    "etag": "c03fa86f12a2b57237644315fe5ce060",
+    "size": 285
+  },
+  {
+    "path": "explorer/daep_observer_frame/data_meta.json",
+    "version_id": "PRMZ2JJQfEJ4p1bCDMTTvXwjvkLHJLq",
+    "etag": "e7a9dd38affea19c792a51a7cecfbb23-5",
+    "size": 72435776
+  },
+  {
+    "path": "explorer/daep_observer_frame/data_meta.json.gz",
+    "version_id": "rKZRWxI3aBnIzS-RkNGVV8WDl3nYXnP",
+    "etag": "37ecc63a6d94a4efc2b2723bd0c01ce5-2",
+    "size": 21756166
+  },
+  {
+    "path": "explorer/daep_observer_frame/data_spectra.bin",
+    "version_id": ".BYZyLxghAzOJ-8DrnjzVrBVQhR53HF",
+    "etag": "4ddd7c9f9e94e557ba12ac92d7c87715-14",
+    "size": 232657920
+  },
+  {
     "path": "explorer/daep_server/reference_index.npz",
     "version_id": "hVakh8dyIk-qt9UrhuF5z6TrZgITbPp",
     "etag": "9827b9d298605b909cc3f28b21a97702",

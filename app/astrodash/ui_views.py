@@ -181,12 +181,33 @@ def leaderboard(request):
     )
 
 
+def _bundle_files_present(bundle_dir: Path) -> bool:
+    """Return whether a twins bundle's descriptor and both data files exist.
+
+    Args:
+        bundle_dir: The bundle directory.
+
+    Returns:
+        True when nothing the page needs is missing.
+    """
+    return all(
+        (bundle_dir / name).is_file()
+        for name in (
+            daep_bundle.DESCRIPTOR_FILENAME,
+            daep_bundle.META_FILENAME,
+            daep_bundle.SPECTRA_FILENAME,
+        )
+    )
+
+
 def spectral_twins(request):
     """Render the public DAEP Spectral Twins explorer.
 
-    The page browses Henna Abunemeh's DAEP latent space of WISeREP spectra:
-    the map, twins, and spectra all come from her precomputed bundle, which
-    the browser fetches from ``TWINS_BUNDLE_URL_PREFIX``. The bundle's
+    The page browses Henna Abunemeh's DAEP latent spaces of WISeREP spectra.
+    Each dataset in ``daep_bundle.TWINS_DATASETS`` is a precomputed bundle the
+    browser fetches from its own prefix under ``TWINS_BUNDLE_URL_PREFIX``; the
+    ``dataset`` query parameter picks one, defaulting to the rest frame. A
+    dataset is offered when its files are all present, and the selected one's
     descriptor is checked here so a missing or unrecognized bundle renders a
     clear state instead of a broken explorer.
 
@@ -196,26 +217,56 @@ def spectral_twins(request):
     Returns:
         The rendered explorer page, or its not-installed or unsupported state.
     """
-    bundle_dir = Path(get_config().daep_twins_bundle_dir)
-    descriptor_path = bundle_dir / daep_bundle.DESCRIPTOR_FILENAME
-    context = {"bundle_state": "ok", "twins_config": None}
-    try:
-        descriptor = daep_bundle.read_descriptor(descriptor_path)
-    except FileNotFoundError:
+    config = get_config()
+    datasets = {dataset.id: dataset for dataset in daep_bundle.TWINS_DATASETS}
+    selected = datasets.get(
+        request.GET.get("dataset"), daep_bundle.DEFAULT_TWINS_DATASET
+    )
+    context = {
+        "bundle_state": "ok",
+        "twins_config": None,
+        "twins_datasets": [
+            {
+                "id": dataset.id,
+                "label": dataset.label,
+                "available": _bundle_files_present(dataset.directory(config)),
+            }
+            for dataset in daep_bundle.TWINS_DATASETS
+        ],
+        "twins_selected_dataset": selected.id,
+    }
+    bundle_dir = selected.directory(config)
+    if not _bundle_files_present(bundle_dir):
         context["bundle_state"] = "missing"
+        return render(request, "astrodash/explorer/spectral_twins.html", context)
+    try:
+        descriptor = daep_bundle.read_descriptor(
+            bundle_dir / daep_bundle.DESCRIPTOR_FILENAME
+        )
     except (daep_bundle.BundleError, ValueError) as exc:
-        logger.error("DAEP twins bundle descriptor rejected: %s", exc)
+        logger.error("DAEP twins bundle %s descriptor rejected: %s", selected.id, exc)
         context["bundle_state"] = "unsupported"
-    else:
-        prefix = TWINS_BUNDLE_URL_PREFIX
-        context["twins_config"] = {
-            "metaUrl": prefix + daep_bundle.META_FILENAME,
-            "spectraUrl": prefix + daep_bundle.SPECTRA_FILENAME,
-            "bundleId": descriptor["bundle_id"],
-            "N": descriptor["N"],
-            "W": descriptor["W"],
-            "metaBytes": descriptor["files"][daep_bundle.META_FILENAME],
-        }
+        return render(request, "astrodash/explorer/spectral_twins.html", context)
+
+    prefix = TWINS_BUNDLE_URL_PREFIX + selected.url_suffix
+    twins_config = {
+        "metaUrl": prefix + daep_bundle.META_FILENAME,
+        "spectraUrl": prefix + daep_bundle.SPECTRA_FILENAME,
+        "bundleId": descriptor["bundle_id"],
+        "N": descriptor["N"],
+        "W": descriptor["W"],
+        "metaBytes": descriptor["files"][daep_bundle.META_FILENAME],
+    }
+    literature = (
+        Path(config.daep_twins_literature_dir) / daep_bundle.LITERATURE_FILENAME
+    )
+    if literature.is_file():
+        twins_config["literatureUrl"] = (
+            TWINS_BUNDLE_URL_PREFIX
+            + daep_bundle.LITERATURE_URL_SUFFIX
+            + daep_bundle.LITERATURE_FILENAME
+        )
+    context["twins_config"] = twins_config
     return render(request, "astrodash/explorer/spectral_twins.html", context)
 
 

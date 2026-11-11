@@ -52,7 +52,31 @@ the client needs to cross-check it.
   #twins-app .target-pill { background: #dce9ff; }
   #twins-app .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   #twins-app .muted { color: #666; }
+  /* Independent shared phase window */
+  #twins-app #literaturePhaseControls { display:flex; flex-wrap:wrap; align-items:center; gap:9px; }
+  #twins-app #literaturePhaseControls[hidden] { display:none; }
+  #twins-app .phase-dual { position:relative; width:210px; height:26px; flex:0 0 210px; }
+  #twins-app .phase-dual input[type="range"] { position:absolute; left:0; top:0; width:100%; margin:0; pointer-events:none; background:transparent; }
+  #twins-app .phase-dual input[type="range"]::-webkit-slider-thumb { pointer-events:auto; }
+  #twins-app .phase-dual input[type="range"]::-moz-range-thumb { pointer-events:auto; }
+  #twins-app .literature-phase-link { white-space:nowrap; }
+  #twins-app .literature-phase-muted { color:#777; }
+  #twins-app .phase-range-readout { min-width:110px; font-variant-numeric:tabular-nums; }
   #twins-app .loading-progress { max-width: 420px; }
+  #twins-app #recurrenceTable { max-height: 340px; overflow:auto; }
+  #twins-app #recurrenceSummary { margin: 8px 0; }
+  #twins-app .recSelected { background:#dce9ff !important; font-weight:700; }
+  #twins-app .rec-row-button { cursor:pointer; padding:5px 10px; }
+  #twins-app #recurrencePairPlot { min-height:400px; width:100%; }
+  #twins-app #recurrenceSection.expanded { overflow-y:auto; overflow-x:hidden; }
+  #twins-app #recurrenceSection.expanded #recurrenceTable { max-height:none; }
+  #twins-app #recurrenceSection.expanded #recurrencePairPlot { height: min(58vh, 700px) !important; min-height:300px; flex: none; }
+  #twins-app #tbl { overflow-x:auto; }
+  #twins-app .pair-date-row { cursor:pointer; }
+  #twins-app .pair-date-row.selected-epoch-row { background:#dce9ff; }
+  #twins-app .pair-date-row:nth-of-type(even) { border-bottom:2px solid #e6eaf0; }
+  #twins-app #recurrencePairEpoch { flex: 1 1 320px; min-width: 220px; }
+  #twins-app #recurrencePairPrev:disabled, #twins-app #recurrencePairNext:disabled { opacity: 0.45; }
 </style>
 
 <div id="twins-app">
@@ -88,22 +112,33 @@ the client needs to cross-check it.
         <option value="canonical_type" selected>Canonical type</option>
         <option value="broad_type">Broad type</option>
       </select>
+      <label title="Filter the UMAP and nearest-neighbor list by observer-frame days relative to literature peak"><input id="filterLiteraturePhase" type="checkbox"/> Literature Phase</label>
+      <div id="literaturePhaseControls" hidden>
+        <span>Phase range:</span>
+        <div class="phase-dual" role="group" aria-label="Literature phase range in days">
+          <input id="litPhaseMin" type="range" min="-100" max="500" step="1" value="-30" aria-label="Earliest literature phase"/>
+          <input id="litPhaseMax" type="range" min="-100" max="500" step="1" value="100" aria-label="Latest literature phase"/>
+        </div>
+        <span id="litPhaseReadout" class="small-note phase-range-readout">−30 to +100 d</span>
+        <label title="Include spectra without a source phase date"><input id="litPhaseShowMissing" type="checkbox"/> Include missing phases</label>
+      </div>
       <label for="latentN">Highlight N twins in latent:</label>
       <input id="latentN" type="range" min="1" max="25" value="10"/>
       <span id="latentNVal" class="small-note"></span>
       <label for="specN">Overlay N twins in spectra:</label>
       <input id="specN" type="range" min="1" max="15" value="5"/>
       <span id="specNVal" class="small-note"></span>
-      <label for="layoutMode">Layout:</label>
-      <select id="layoutMode">
-        <option value="stack" selected>1-1-1-1 stack</option>
-        <option value="2x2">2 × 2</option>
+      <label for="modelMode">Model and Dataset:</label>
+      <select id="modelMode" aria-label="Model and Dataset">
+        {% for option in twins_datasets %}
+          <option value="{{ option.id }}" {% if option.id == twins_selected_dataset %}selected{% endif %} {% if not option.available %}disabled{% endif %}>{{ option.label }}{% if not option.available %} (data missing){% endif %}</option>
+        {% endfor %}
       </select>
       <button id="downloadSelected" class="btn btn-sm btn-outline-secondary ml-auto" type="button">Download selected outputs</button>
     </div>
   </div>
 
-  <div id="dashboardGrid" class="dashboard-grid layout-stack" hidden>
+  <div id="dashboardGrid" class="dashboard-grid layout-2x2" hidden>
     <div id="latentCard" class="twins-card panel-card">
       <div class="panel-toolbar"><button class="expandBtn btn btn-sm btn-light" data-card="latentCard" type="button">⛶ Expand</button></div>
       <div id="latent" class="panel-content plot-panel"></div>
@@ -126,14 +161,66 @@ the client needs to cross-check it.
     </div>
   </div>
 
+  <section id="recurrenceSection" class="twins-card panel-card mt-3" hidden>
+    <div class="panel-toolbar">
+      <button class="expandBtn btn btn-sm btn-light" data-card="recurrenceSection" type="button">⛶ Expand</button>
+    </div>
+    <div class="twins-row">
+      <strong>Recurrent spectroscopic twins across observations</strong>
+      <label for="recurrenceTopK">Top unique twin objects per target spectrum:</label>
+      <input id="recurrenceTopK" type="number" min="1" max="50" value="5"/>
+      <label for="recurrenceMinEpochs">Minimum observing dates matched:</label>
+      <input id="recurrenceMinEpochs" type="number" min="2" value="2"/>
+
+<input id="recurrentOnly" type="checkbox" hidden aria-hidden="true" tabindex="-1"/>
+<button id="recurrenceModeButton"
+        class="btn btn-sm btn-outline-primary"
+        type="button"
+        aria-pressed="false">
+    Update page to recurrent twins
+</button>
+
+      <button id="downloadRecurrence" class="btn btn-sm btn-outline-secondary" type="button">Export recurrence CSV (summary + spectra)</button>
+    </div>
+    <div id="recurrenceSummary" class="small-note mt-2"></div>
+    <div id="recurrenceTable" class="mt-2"></div>
+    <div class="twins-card mt-3">
+      <div class="twins-row justify-content-between">
+        <strong id="recurrencePairTitle">Select a recurrent twin to compare spectra</strong>
+        <label for="recurrencePairEpoch">Matching target observation:</label>
+        <button id="recurrencePairPrev" class="btn btn-sm btn-outline-secondary" type="button" aria-label="Previous matched observation">← Previous</button>
+        <select id="recurrencePairEpoch" style="min-width:260px;max-width:100%;" aria-label="Matching target observation"></select>
+        <button id="recurrencePairNext" class="btn btn-sm btn-outline-secondary" type="button" aria-label="Next matched observation">Next →</button>
+        <span id="recurrencePairCounter" class="small-note" aria-live="polite"></span>
+      </div>
+      <div id="recurrencePairDetails" class="small-note mt-2"></div>
+      <div id="recurrencePairPlot" style="width:100%;height:500px;"></div>
+      <div class="small-note">Only the target spectrum and best-matched recurrent twin spectrum are plotted. Use the observation selector or Previous/Next buttons to compare every matched spectrum, including multiple spectra obtained on the same date.</div>
+    </div>
+  </section>
   <div id="status" class="status" role="status"></div>
   <div class="small-note mt-1">
-    Twins are computed from the full DAEP latent sequence using mean cosine distance.
-    The 2-D UMAP map is built from that precomputed distance matrix.
+    Spectroscopic twins are identified using cosine similarity/distance between full, 1024 dimensional DAEP latent representations. A 2D UMAP projection is constructed from the precomputed distance matrix, UMAP is only used to visualize the latent space structure.
   </div>
 </div>
 
 <script>
+
+function daepWavelengthLabel() {
+  const selected = document.getElementById('modelMode')?.value
+    || new URLSearchParams(window.location.search).get('dataset')
+    || 'rest_frame';
+
+  if (selected === 'observer_frame') {
+    return 'Observed wavelength [Å]';
+  }
+  if (selected === 'multi_object_rest') {
+    return 'Wavelength [Å] (mixed frames)';
+  }
+  return 'Rest-frame wavelength [Å]';
+}
+
+
 (function () {
 "use strict";
 
@@ -159,6 +246,58 @@ let latentBaseTraces = null;
 
 const $ = id => document.getElementById(id);
 
+// Authoritative observation-time lookup, not model phase. Filled from the
+// catalog file at startup; stays empty when there is none.
+let LITERATURE_CATALOG = {};
+// How long the page waits for the catalog after the metadata has loaded.
+const LITERATURE_CATALOG_WAIT_MS = 10000;
+let LITERATURE_ROWS = null;
+function literatureKey(sn, date) {
+  const name = String(sn || '').toLowerCase().replace(/[^a-z0-9]/g,'');
+  const timestamp = String(date || '').trim().replace('T',' ').slice(0,19);
+  return name + '|' + timestamp;
+}
+function buildLiteratureRows() {
+  LITERATURE_ROWS = new Array(DATA.N);
+  for (let i=0; i<DATA.N; i++) {
+    LITERATURE_ROWS[i] = LITERATURE_CATALOG[literatureKey(DATA.sn[i], DATA.obs_date[i])] || null;
+  }
+}
+function literatureAt(i) { return LITERATURE_ROWS && LITERATURE_ROWS[i] || null; }
+function literaturePhase(i) {
+  const row = literatureAt(i);
+  return row && Number.isFinite(Number(row[0])) ? Number(row[0]) : null;
+}
+function literaturePhaseHtml(i) {
+  const row = literatureAt(i);
+  if (!row) return '<td class="literature-phase-muted">N/A</td>';
+  const phase = Number(row[0]);
+  const label = (phase > 0 ? '+' : '') + phase.toFixed(2) + ' d';
+  const source = String(row[1] || '');
+  const citation = String(row[2] || '');
+  const doi = String(row[3] || '');
+  const sourceURL = /^https?:\/\//i.test(source) ? source : '';
+  const doiURL = /^10\.\d{4,9}\//.test(doi) ? 'https://doi.org/' + encodeURI(doi) : '';
+  const citeURL = doiURL || sourceURL;
+  const phaseHTML = sourceURL
+    ? '<a class="literature-phase-link" href="' + escapeHtml(sourceURL) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(citation || source) + '">' + escapeHtml(label) + '</a>'
+    : escapeHtml(label);
+  return '<td>' + phaseHTML + '</td>';
+}
+function literatureFilterActive() { return $('filterLiteraturePhase').checked; }
+function literaturePass(i) {
+  if (!literatureFilterActive()) return true;
+  const phase = literaturePhase(i);
+  if (phase === null) return $('litPhaseShowMissing').checked;
+  return phase >= Number($('litPhaseMin').value) && phase <= Number($('litPhaseMax').value);
+}
+function literatureReadout() {
+  const lo = Number($('litPhaseMin').value), hi = Number($('litPhaseMax').value);
+  const fmt = x => (x > 0 ? '+' : '') + x;
+  $('litPhaseReadout').textContent = fmt(lo) + ' to ' + fmt(hi) + ' d';
+}
+
+
 function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
 function fmtNum(x, ndp) {
   if (x === null || x === undefined) return "";
@@ -167,7 +306,15 @@ function fmtNum(x, ndp) {
 }
 function uniqSorted(arr) { return Array.from(new Set(arr)).sort((a, b) => a.localeCompare(b)); }
 function snKey(sn) { return String(sn || "").trim().toLowerCase(); }
-function normType(t) { const s = String(t || "").trim(); return s ? s : "Unknown"; }
+// UI label cleanup only. Original archive/model labels remain in DATA.
+function displaySNType(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (s === 'SN-I') return 'SN I';
+  if (/^SLSNI(?:I|R)?$/.test(s)) return 'SLSN-' + s.slice(4);
+  if (s.startsWith('SNI')) return 'SN ' + s.slice(2);
+  return s;
+}
+function normType(t) { const s = displaySNType(t); return s ? s : "Unknown"; }
 
 function colorValuesForField(field) {
   const arr = DATA && Array.isArray(DATA[field]) ? DATA[field] : null;
@@ -239,6 +386,7 @@ function buildBaseLatentTraces() {
   const groups = {};
   const values = colorValuesForField(CURRENT_COLOR_FIELD);
   for (let i = 0; i < DATA.N; i++) {
+    if (!literaturePass(i)) continue;
     const t = normType(values[i]);
     if (!(t in groups)) groups[t] = {x: [], y: [], text: [], customdata: []};
     groups[t].x.push(DATA.Y[i][0]);
@@ -295,6 +443,7 @@ function getNeighborList(i, excludeSameSN, uniqueTwinSN) {
   for (let t = 0; t < nbrs.length; t++) {
     const j = nbrs[t];
     if (j === i) continue;
+    if (!literaturePass(j)) continue;
     const keyJ = snKey(DATA.sn[j]);
     if (excludeSameSN && keyJ === keyI) continue;
     if (uniqueTwinSN) {
@@ -304,6 +453,347 @@ function getNeighborList(i, excludeSameSN, uniqueTwinSN) {
     out.push({j, d: dists[t]});
   }
   return out;
+}
+
+// Recurrence is measured across DISTINCT EPOCHS of the selected target SN.
+// Multiple spectra of one twin object within a single target list count once.
+// A target observation with a missing JD/date is counted as its own epoch.
+function epochKey(i) {
+  const jd = DATA.jd && DATA.jd[i];
+  if (jd !== null && jd !== undefined && Number.isFinite(Number(jd))) {
+    // One date is one epoch; protect against repeated reductions of that epoch.
+    // JD values (not MJD) supplied by this explorer use the integer calendar-day bin.
+    const x = Number(jd);
+    return "jd-day:" + Math.floor(x + 0.5);
+  }
+  const dt = (DATA.obs_date && DATA.obs_date[i]) || (DATA.jd_str && DATA.jd_str[i]) || "";
+  if (dt) return "date:" + String(dt).trim().toLowerCase();
+  return "unknown-observation:" + i;
+}
+
+function recurrenceForSN(targetSN, topK) {
+  const targets = SN_TO_IDX[targetSN] || [];
+  const targetKey = snKey(targetSN);
+  const allEpochs = new Set(targets.map(epochKey));
+  const byTwin = new Map();
+  for (const ti of targets) {
+    const foundThisObs = new Set();
+    let rank = 0;
+    for (const neighbor of getNeighborList(ti, true, true)) {
+      const tj = neighbor.j;
+      const twinName = DATA.sn[tj] || "";
+      const key = snKey(twinName);
+      if (!key || key === targetKey || foundThisObs.has(key)) continue;
+      foundThisObs.add(key);
+      rank++;
+      if (rank > topK) break;
+      if (!byTwin.has(key)) byTwin.set(key, {name:twinName, epochs:new Map(), observations:new Set(), matches:[]});
+      const entry = byTwin.get(key);
+      entry.observations.add(ti);
+      const epoch = epochKey(ti);
+      const match = {targetIdx:ti,twinIdx:tj,rank,distance:neighbor.d,similarity:1-neighbor.d,epoch};
+      const prev = entry.epochs.get(epoch);
+      if (!prev || match.rank < prev.rank || (match.rank===prev.rank && match.distance < prev.distance)) entry.epochs.set(epoch, match);
+      entry.matches.push(match);
+    }
+  }
+  const rows = [...byTwin.values()].map(r => {
+    const bestByEpoch = [...r.epochs.values()].sort((a,b)=>a.distance-b.distance);
+    return {...r, nEpochs:r.epochs.size, nObs:r.observations.size,
+      fraction: allEpochs.size ? r.epochs.size/allEpochs.size : 0,
+      meanSimilarity:bestByEpoch.reduce((a,m)=>a+m.similarity,0)/Math.max(1,bestByEpoch.length),
+      bestSimilarity:bestByEpoch.length ? bestByEpoch[0].similarity : null,
+      bestMatches:bestByEpoch};
+  });
+  rows.sort((a,b)=>b.nEpochs-a.nEpochs || b.meanSimilarity-a.meanSimilarity || a.name.localeCompare(b.name));
+  return {rows, totalEpochs:allEpochs.size, totalObservations:targets.length};
+}
+
+let CURRENT_RECURRENCE = null;
+let REC_PAIR_SN = null;
+let REC_PAIR_EPOCH = null;
+let REC_PAIR_TOKEN = 0;
+
+function recDate(i) {
+  return (DATA.jd_str && DATA.jd_str[i]) || dateAt(i) || ("idx="+i);
+}
+
+function renderRecurrence(targetIdx) {
+  const targetSN = DATA.sn[targetIdx] || "";
+  const topK = clamp(parseInt(document.getElementById("recurrenceTopK").value)||5,1,Math.max(1,DATA.K-1));
+  const minimum = Math.max(2,parseInt(document.getElementById("recurrenceMinEpochs").value)||2);
+  document.getElementById("recurrenceTopK").value = topK;
+  document.getElementById("recurrenceMinEpochs").value = minimum;
+  const rec = recurrenceForSN(targetSN,topK);
+  const shown = rec.rows.filter(r=>r.nEpochs>=minimum);
+  if (!CURRENT_RECURRENCE || CURRENT_RECURRENCE.targetSN !== targetSN) {
+    REC_PAIR_SN = null; REC_PAIR_EPOCH = null;
+  }
+  CURRENT_RECURRENCE = {targetSN,topK,minimum,rec,shown};
+  document.getElementById("recurrenceSummary").textContent =
+    `${targetSN}: ${rec.totalEpochs} distinct observed days (${rec.totalObservations} spectra). ` +
+    `A twin is counted once per target day if it appears among the top ${topK} distinct twin objects. ` +
+    `Select an object below to plot its matching spectrum with the target at each epoch.`;
+  const box = document.getElementById("recurrenceTable");
+  if (!shown.length) {
+    box.innerHTML = '<div class="small">No recurrent objects at these settings. Try a larger top-k or lower minimum epochs.</div>';
+    REC_PAIR_SN = null;
+    clearRecurrencePair("No recurrent twin selected");
+    return new Set();
+  }
+  if (!shown.some(r=>snKey(r.name)===REC_PAIR_SN)) {
+    REC_PAIR_SN = snKey(shown[0].name);
+    REC_PAIR_EPOCH = null;
+  }
+  // The lower section summarizes one selected object pair, not every candidate.
+  let html = '<div class="twins-row" style="margin:8px 0;">' +
+    '<label for="recurrentObjectSelect">Select recurrent twin:</label>' +
+    '<select id="recurrentObjectSelect" style="min-width:220px;max-width:100%;">' +
+    shown.map(r => `<option value="${escapeHtml(snKey(r.name))}" ${snKey(r.name)===REC_PAIR_SN?'selected':''}>${escapeHtml(r.name)} — ${r.nEpochs} dates</option>`).join('') +
+    '</select></div>' +
+    '<table class="neighbor-table"><thead><tr><th>Selected twin</th><th>Days matched</th><th>Recurrence rate</th><th>Mean cosine similarity</th><th>Best cosine similarity</th></tr></thead><tbody>';
+  const r = shown.find(r => snKey(r.name) === REC_PAIR_SN);
+  if (r) {
+    html += `<tr class="recSelected"><td><strong>${escapeHtml(r.name)}</strong></td>` +
+      `<td>${r.nEpochs} of ${rec.totalEpochs}</td><td>${(100*r.fraction).toFixed(1)}%</td>` +
+      `<td class="mono">${fmtNum(r.meanSimilarity,5)}</td><td class="mono">${fmtNum(r.bestSimilarity,5)}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  box.innerHTML = html;
+  const recurrentObjectSelect = box.querySelector('#recurrentObjectSelect');
+  recurrentObjectSelect.addEventListener('change', () => {
+    REC_PAIR_SN = recurrentObjectSelect.value;
+    REC_PAIR_EPOCH = null;
+    renderRecurrence(targetIdx);
+    // If already in recurrence metadata mode, keep its selected-pair row in sync.
+    if ($('recurrentOnly').checked) updateAll(targetIdx);
+  });
+  populateRecurrenceEpochs();
+  return new Set(shown.map(r=>snKey(r.name)));
+}
+
+function clearRecurrencePair(msg) {
+  document.getElementById('recurrencePairTitle').textContent = msg;
+  document.getElementById('recurrencePairEpoch').innerHTML = '';
+  document.getElementById('recurrencePairCounter').textContent = '';
+  document.getElementById('recurrencePairPrev').disabled = true;
+  document.getElementById('recurrencePairNext').disabled = true;
+  document.getElementById('recurrencePairDetails').textContent = '';
+  Plotly.react('recurrencePairPlot',[],{annotations:[{text:msg,xref:'paper',yref:'paper',x:.5,y:.5,showarrow:false}],xaxis:{visible:false},yaxis:{visible:false}}, {responsive:true});
+}
+
+// All spectrum-level matches, including multiple target spectra on the same day.
+// The object's recurrence fraction is STILL calculated from distinct epochKeys.
+function sortedRecurrenceMatches(object) {
+  return [...object.matches].sort((a,b) => {
+    const jdA = DATA.jd[a.targetIdx], jdB = DATA.jd[b.targetIdx];
+    const aNum = jdA === null || jdA === undefined ? Infinity : Number(jdA);
+    const bNum = jdB === null || jdB === undefined ? Infinity : Number(jdB);
+    return aNum - bNum || a.targetIdx - b.targetIdx || a.twinIdx - b.twinIdx;
+  });
+}
+function recurrenceMatchId(m) { return String(m.targetIdx) + ':' + String(m.twinIdx); }
+function recurrenceObsLabel(m) {
+  const targetInst = instAt(m.targetIdx) || 'Unknown instrument';
+  const twinInst = instAt(m.twinIdx) || 'Unknown instrument';
+
+  const targetId = DATA.spec_id?.[m.targetIdx];
+  const twinId = DATA.spec_id?.[m.twinIdx];
+
+  const targetLabel = targetInst +
+    (targetId != null && String(targetId).trim() ? ' #' + targetId : '');
+
+  const twinLabel = twinInst +
+    (twinId != null && String(twinId).trim() ? ' #' + twinId : '');
+
+  return `${recDate(m.targetIdx)} · ${targetLabel}` +
+    ` → ${recDate(m.twinIdx)} · ${twinLabel}` +
+    ` · cosine ${fmtNum(m.similarity,4)}`;
+}
+function updateRecurrenceNavigation() {
+  const sel = $('recurrencePairEpoch');
+  const index = sel.selectedIndex;
+  const count = sel.options.length;
+  $('recurrencePairPrev').disabled = index <= 0;
+  $('recurrencePairNext').disabled = index < 0 || index >= count-1;
+  $('recurrencePairCounter').textContent = count ? `Observation ${index+1} of ${count}` : 'No matched observations';
+}
+function selectRecurrenceMatch(id) {
+  const sel = $('recurrencePairEpoch');
+  if (!Array.from(sel.options).some(o => o.value === id)) return;
+  REC_PAIR_EPOCH = id; // Historical variable name; now identifies a unique spectrum pair.
+  sel.value = id;
+  updateRecurrenceNavigation();
+  $('tbl').querySelectorAll('.pair-date-row').forEach(row =>
+    row.classList.toggle('selected-epoch-row', row.dataset.epoch === id));
+  plotRecurrencePair();
+}
+function stepRecurrenceMatch(delta) {
+  const sel = $('recurrencePairEpoch');
+  const next = sel.selectedIndex + delta;
+  if (next < 0 || next >= sel.options.length) return;
+  selectRecurrenceMatch(sel.options[next].value);
+}
+
+function populateRecurrenceEpochs() {
+  if (!CURRENT_RECURRENCE) return;
+  const r = CURRENT_RECURRENCE.shown.find(x => snKey(x.name) === REC_PAIR_SN);
+  if (!r) { clearRecurrencePair('Select a recurrent twin'); updateRecurrenceNavigation(); return; }
+  const matches = sortedRecurrenceMatches(r);
+  const sel = $('recurrencePairEpoch');
+  if (!matches.some(m => recurrenceMatchId(m) === REC_PAIR_EPOCH)) {
+    REC_PAIR_EPOCH = matches.length ? recurrenceMatchId(matches[0]) : null;
+  }
+  sel.innerHTML = '';
+  matches.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = recurrenceMatchId(m);
+    opt.textContent = recurrenceObsLabel(m);
+    sel.appendChild(opt);
+  });
+  if (REC_PAIR_EPOCH !== null) sel.value = REC_PAIR_EPOCH;
+  updateRecurrenceNavigation();
+  if (matches.length) plotRecurrencePair();
+  else clearRecurrencePair('No matched observations');
+}
+
+async function plotRecurrencePair() {
+  if (!CURRENT_RECURRENCE) return;
+  const r=CURRENT_RECURRENCE.shown.find(x=>snKey(x.name)===REC_PAIR_SN);
+  if (!r) return;
+  const match=r.matches.find(m=>recurrenceMatchId(m)===REC_PAIR_EPOCH);
+  if (!match) return;
+  const myToken=++REC_PAIR_TOKEN;
+  const targetSN=CURRENT_RECURRENCE.targetSN;
+  document.getElementById('recurrencePairTitle').textContent=`${targetSN} vs ${r.name} — matched in ${r.nEpochs}/${CURRENT_RECURRENCE.rec.totalEpochs} target days`;
+  document.getElementById('recurrencePairDetails').textContent='Loading focused spectral pair…';
+  try {
+    const [a,b]=await Promise.all([prefetchSpectrum(match.targetIdx),prefetchSpectrum(match.twinIdx)]);
+    if(myToken!==REC_PAIR_TOKEN) return;
+    const stats=computeSpectralRMSE(a,b);
+    const traces=[
+      spectraTrace(a,`${targetSN} | ${recDate(match.targetIdx)} | ${instAt(match.targetIdx)||'instrument NA'} | target`,null),
+      spectraTrace(b,`${r.name} | ${recDate(match.twinIdx)} | ${instAt(match.twinIdx)||'instrument NA'} | twin`,'dash')
+    ];
+    traces[0].line={color:'#13294B',width:2.2};
+    traces[1].line={color:'#2986D2',width:1.8,dash:'dash'};
+    Plotly.react('recurrencePairPlot',traces,{
+      title:'Matched spectra only — normalized flux',autosize:true,
+      margin:{l:60,r:20,t:50,b:125},
+      xaxis:{title:daepWavelengthLabel()},yaxis:{title:'Normalized flux'},
+      legend:{orientation:'h',x:0,y:-0.3,yanchor:'top'}
+    },{responsive:true});
+    document.getElementById('recurrencePairDetails').textContent=
+      `Target ${recDate(match.targetIdx)} → matched ${r.name} spectrum ${recDate(match.twinIdx)}; `+
+      `cosine similarity ${fmtNum(match.similarity,6)}; `+
+      `spectral RMSE ${stats.rmse===null?'NA':fmtNum(stats.rmse,5)} (${stats.nCommon} shared valid bins).`;
+  } catch(err) {
+    if(myToken===REC_PAIR_TOKEN) document.getElementById('recurrencePairDetails').textContent='Failed to fetch pair: '+String(err);
+  }
+}
+
+// Export wavelength + target/twin flux arrays for EVERY matched observation of the
+// selected recurrent twin, not only the currently plotted pair. Each spectrum
+// pair is recoverable by pair_id, including same-night observations.
+function recurrenceCsvCell(value) {
+  const str = value === null || value === undefined ? '' : String(value);
+  // Quote all fields and escape embedded quotes; guard against CSV formula injection.
+  const safe = /^[=+@\t\r]/.test(str) ? "'" + str : str;
+  return '"' + safe.replace(/"/g,'""') + '"';
+}
+function triggerCsvDownload(csv, filename) {
+  const url = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+// Summary rows cover ALL recurrent objects; spectrum rows cover the selected twin.
+// The row_type field distinguishes summary from wavelength samples.
+async function exportUnifiedRecurrenceCSV() {
+  const current = CURRENT_RECURRENCE;
+  const selected = current && current.shown.find(r => snKey(r.name) === REC_PAIR_SN);
+  if (!current || !selected) {
+    alert('Select a recurrent twin first.');
+    return;
+  }
+  const button = $('downloadRecurrence');
+  if (button.disabled) return;
+  const oldText = button.textContent;
+  button.disabled = true;
+  const columns = [
+    'row_type','target_sn','twin_sn','target_epoch_count','total_target_epochs',
+    'recurrence_rate','mean_cosine_similarity','best_cosine_similarity',
+    'pair_id','target_spec_id','twin_spec_id','target_idx','twin_idx',
+    'target_date','twin_date','target_instrument','twin_instrument',
+    'cosine_similarity','spectral_rmse','common_valid_bins',
+    'wavelength_angstrom','target_flux_normalized','twin_flux_normalized',
+    'target_valid','twin_valid'
+  ];
+  const lines = [columns.map(recurrenceCsvCell).join(',')];
+  const pushRow = values => lines.push(columns.map(key => recurrenceCsvCell(values[key])).join(','));
+  try {
+    // Preserve the complete recurrence summary without downloading every object's spectra.
+    for (const object of current.shown) {
+      pushRow({
+        row_type:'summary',target_sn:current.targetSN,twin_sn:object.name,
+        target_epoch_count:object.nEpochs,
+        total_target_epochs:current.rec.totalEpochs,
+        recurrence_rate:object.fraction,
+        mean_cosine_similarity:object.meanSimilarity,
+        best_cosine_similarity:object.bestSimilarity
+      });
+    }
+    const matches=sortedRecurrenceMatches(selected);
+    for (let start=0;start<matches.length;start+=6) {
+      const batch=matches.slice(start,start+6);
+      button.textContent=`Preparing spectra ${Math.min(start+batch.length,matches.length)}/${matches.length}…`;
+      const loaded=await Promise.all(batch.map(async m=>{
+        const [a,b]=await Promise.all([prefetchSpectrum(m.targetIdx),prefetchSpectrum(m.twinIdx)]);
+        return {m,a,b,stats:computeSpectralRMSE(a,b)};
+      }));
+      for (const {m,a,b,stats} of loaded) {
+        const meta={
+          row_type:'spectrum',target_sn:current.targetSN,twin_sn:selected.name,
+          target_epoch_count:selected.nEpochs,
+          total_target_epochs:current.rec.totalEpochs,
+          recurrence_rate:selected.fraction,
+          mean_cosine_similarity:selected.meanSimilarity,
+          best_cosine_similarity:selected.bestSimilarity,
+          pair_id:`${m.targetIdx}:${m.twinIdx}`,
+          target_spec_id:DATA.spec_id[m.targetIdx],
+          twin_spec_id:DATA.spec_id[m.twinIdx],
+          target_idx:m.targetIdx,twin_idx:m.twinIdx,
+          target_date:recDate(m.targetIdx),twin_date:recDate(m.twinIdx),
+          target_instrument:instAt(m.targetIdx),twin_instrument:instAt(m.twinIdx),
+          cosine_similarity:m.similarity,
+          spectral_rmse:stats.rmse===null?'':stats.rmse,
+          common_valid_bins:stats.nCommon
+        };
+        for(let k=0;k<DATA.wave.length;k++) {
+          const aValid=Boolean(a.mask[k]), bValid=Boolean(b.mask[k]);
+          pushRow({...meta,
+            wavelength_angstrom:DATA.wave[k],
+            target_flux_normalized:aValid?a.flux[k]:'',
+            twin_flux_normalized:bValid?b.flux[k]:'',
+            target_valid:aValid?1:0,twin_valid:bValid?1:0
+          });
+        }
+      }
+    }
+    const filename='recurrent_twins_'+safeFilenamePart(current.targetSN)+
+      '_selected_'+safeFilenamePart(selected.name)+'.csv';
+    triggerCsvDownload(lines.join('\n')+'\n',filename);
+  } catch(err) {
+    console.error('Unified recurrence export failed:',err);
+    alert('Could not export recurrence CSV: '+String(err));
+  } finally {
+    button.disabled=false;
+    button.textContent=oldText;
+  }
 }
 
 function computeSpectralRMSE(targetData, twinData) {
@@ -435,40 +925,177 @@ function escapeHtml(x) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
-function renderNeighborTable(targetIdx, neighborList, rmseByIdx, targetData) {
-  const el = $("tbl");
-  const targetValid = targetData ? Array.from(targetData.mask).reduce((a, v) => a + (v ? 1 : 0), 0) : "";
-  const cell = (v, mono) => '<td' + (mono ? ' class="mono"' : '') + '>' + escapeHtml(v) + '</td>';
-  const row = (idx, extraClass, rankHtml, dist, rmse, nCommon) =>
-    '<tr class="' + extraClass + '" data-idx="' + idx + '" tabindex="0">' +
-    '<td>' + rankHtml + '</td>' + cell(dist, true) + cell(rmse, true) + cell(nCommon, true) +
-    cell(DATA.sn[idx]) + cell(DATA.obj_type[idx] || "") + cell(sourceAt(idx)) + cell(instAt(idx)) +
-    cell(fmtNum(DATA.phase[idx], 3), true) + cell(DATA.jd_str[idx] || dateAt(idx) || "") +
-    cell(fmtNum(DATA.z[idx], 6), true) + cell(idx, true) + '</tr>';
 
-  let html = '<div class="table-title">Target + nearest-neighbor spectra</div>' +
-    '<div class="table-subtitle">Cosine similarity = 1 − DAEP latent cosine distance. RMSE compares normalized target and twin fluxes over bins valid in both spectra. Click a twin row, or focus it and press Enter, to make it the new target.</div>' +
+// A recurrence count describes an OBJECT; similarity/RMSE describe a SPECTRUM PAIR.
+// Keep them separate. Each target date displays its actual target spectrum and
+// its actual matched spectrum with independent dates and metadata.
+let selectedRecurrenceTableToken = 0;
+async function renderSelectedRecurrencePairsTable() {
+  const el = $("tbl");
+  const token = ++selectedRecurrenceTableToken;
+  const current = CURRENT_RECURRENCE;
+  const object = current && current.shown.find(r => snKey(r.name) === REC_PAIR_SN);
+  if (!current || !object) {
+    el.innerHTML = '<div class="small-note">No recurrent twin selected.</div>';
+    return;
+  }
+  const matches = sortedRecurrenceMatches(object).filter(m => literaturePass(m.twinIdx));
+  const isActive = () => token === selectedRecurrenceTableToken &&
+    $("recurrentOnly").checked && CURRENT_RECURRENCE === current &&
+    REC_PAIR_SN === snKey(object.name);
+  el.innerHTML = '<div class="table-title">Matched spectra: ' +
+    escapeHtml(current.targetSN) + ' ↔ ' + escapeHtml(object.name) + '</div>' +
+    '<div class="small-note">Loading RMSE for all ' + matches.length +
+    ' matched observing dates…</div>';
+
+  // Small batches avoid flooding the browser with simultaneous range requests.
+  const entries = [];
+  for (let offset=0; offset<matches.length; offset+=8) {
+    if (!isActive()) return;
+    const batch = matches.slice(offset, offset+8);
+    const resolved = await Promise.all(batch.map(async m => {
+      try {
+        const [target, twin] = await Promise.all([
+          prefetchSpectrum(m.targetIdx), prefetchSpectrum(m.twinIdx)
+        ]);
+        return {m, stats: computeSpectralRMSE(target, twin), error: null};
+      } catch(e) {
+        return {m, stats: {rmse:null,nCommon:0}, error:String(e)};
+      }
+    }));
+    entries.push(...resolved);
+  }
+  if (!isActive()) return;
+
+  const cell = (value, mono=false) => '<td' + (mono ? ' class="mono"' : '') +
+    '>' + escapeHtml(value === null || value === undefined ? '' : value) + '</td>';
+  const date = idx => (DATA.jd_str && DATA.jd_str[idx]) || dateAt(idx) || '—';
+  const row = (entry, isTwin) => {
+    const {m,stats} = entry;
+    const idx = isTwin ? m.twinIdx : m.targetIdx;
+    const chosen = recurrenceMatchId(m) === REC_PAIR_EPOCH;
+    const role = isTwin ? 'Twin' : 'Target';
+    const label = chosen ? ' selected-epoch-row' : '';
+    // Similarity and spectral RMSE are measured between the two spectra;
+    // display them on the twin row, never as a self-comparison for the target.
+    return '<tr class="pair-date-row' + label + '" data-epoch="' +
+      escapeHtml(recurrenceMatchId(m)) + '" tabindex="0" title="Select this matching target observation">' +
+      cell(role) + cell(DATA.sn[idx]) +
+      cell(isTwin ? fmtNum(m.similarity,6) : '—',true) +
+      cell(isTwin ? fmtNum(m.distance,6) : '—',true) +
+      cell(isTwin ? (stats.rmse === null ? 'NA' : fmtNum(stats.rmse,6)) : '—',true) +
+      cell(isTwin ? stats.nCommon : '—',true) +
+      cell(fmtNum(DATA.z[idx],6),true) + cell(DATA.obj_type[idx] || '') +
+      cell(date(idx)) + cell(instAt(idx)) + cell(sourceAt(idx)) + literaturePhaseHtml(idx) + '</tr>';
+  };
+  let html = '<div class="table-title">Matched spectra: ' +
+    escapeHtml(current.targetSN) + ' ↔ ' + escapeHtml(object.name) + '</div>' +
+    '<div class="table-subtitle">' + matches.length + ' matched target observations across ' + object.nEpochs + ' distinct dates. ' +
+    'Each matched observation has two rows: the actual target spectrum and its matched twin spectrum. ' +
+    'Date, z, type, instrument and source belong to the SN on that row. ' +
+    'Cosine and RMSE on the twin row compare that exact pair, using mutually valid bins. ' +
+    'Click either row to select and plot that observation.</div>' +
     '<table class="neighbor-table"><thead><tr>' +
-    '<th>Rank</th><th>Distance</th><th>RMSE</th><th>Common bins</th><th>SN</th><th>Type</th>' +
-    '<th>Source</th><th>Instrument</th><th>Phase</th><th>Date</th><th>z</th><th>idx</th>' +
+    '<th>Role</th><th>SN</th><th>Cosine Similarity</th><th>Cosine Distance</th>' +
+    '<th>RMSE</th><th>Common bins</th><th>z</th><th>Type</th><th>Date</th>' +
+    '<th>Instrument</th><th>Source</th><th>Literature Phase (d)</th></tr></thead><tbody>';
+  for (const entry of entries) {
+    html += row(entry,false) + row(entry,true);
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  el.querySelectorAll('tr[data-epoch]').forEach(tr => {
+    const selectDate = () => {
+      selectRecurrenceMatch(tr.dataset.epoch);
+    };
+    tr.addEventListener('click',selectDate);
+    tr.addEventListener('keydown',ev => {
+      if (ev.key === 'Enter') {ev.preventDefault();selectDate();}
+    });
+  });
+
+  // Use the SAME observation pairs as the table for the metric panel.
+  const cosineMode = $('metricMode').value === 'cosine';
+  const valid = entries.filter(o => cosineMode ? Number.isFinite(o.m.similarity) :
+    Number.isFinite(o.stats.rmse));
+  const values = valid.map(o => cosineMode ? o.m.similarity : o.stats.rmse);
+  Plotly.react('rmse',[{
+    type:'bar',
+    x:valid.map((o,i)=>i+1), y:values,
+    text:values.map(x=>x.toFixed(5)), textposition:'auto',
+    marker:{color:'#13294B'},
+    customdata:valid.map(o=>[date(o.m.targetIdx),date(o.m.twinIdx),instAt(o.m.targetIdx),instAt(o.m.twinIdx),DATA.spec_id[o.m.targetIdx]]),
+    hovertemplate:'Target: %{customdata[0]} / %{customdata[2]}<br>Twin: %{customdata[1]} / %{customdata[3]}' +
+      '<br>Value: %{y:.6f}<extra></extra>'
+  }],{
+    title:(cosineMode ? 'Latent cosine similarity' : 'Spectral RMSE') +
+      ' — ' + current.targetSN + ' vs ' + object.name,
+    autosize:true,margin:{l:60,r:15,t:55,b:140},
+    xaxis:{title:'Matched target observation (chronological)',dtick:1,tickmode:'array',
+      tickvals:valid.map((o,i)=>i+1),ticktext:valid.map(o=>date(o.m.targetIdx)+' / '+(instAt(o.m.targetIdx)||'NA')),tickangle:-45},
+    yaxis:{title:cosineMode?'Cosine similarity':'RMSE (normalized flux)',
+      ...(cosineMode ? {} : {rangemode:'tozero'})}
+  },{responsive:true});
+}
+
+function renderNeighborTable(targetIdx, neighborList, rmseByIdx, targetData, recurrenceMode=false) {
+  // This mode displays actual dated spectrum PAIRS.
+  if (recurrenceMode) {
+    renderSelectedRecurrencePairsTable();
+    return;
+  }
+
+  const el = $("tbl");
+  const targetValid = targetData ? Array.from(targetData.mask).reduce((a,v)=>a+(v?1:0),0) : 0;
+  const cell = (v, mono=false) => '<td' + (mono ? ' class="mono"' : '') + '>' + escapeHtml(v) + '</td>';
+  const heading = recurrenceMode
+    ? 'Recurrent Spectroscopic Twins — Metadata'
+    : 'Target + Spectroscopic Twin Spectra';
+  const note = recurrenceMode
+    ? 'Each row is a recurrent twin object, represented by its highest-similarity match across all observing dates of the selected SN. Cosine metrics and RMSE belong to that matched observation pair, not necessarily the currently selected spectrum. Days matched counts unique target observing dates. Select a row to make its twin spectrum the new target.'
+    : 'Cosine similarity = (z_target · z_twin) / (||z_target|| × ||z_twin||), where z denotes the DAEP latent representation. RMSE compares normalized fluxes over mutually valid wavelength bins. Click a twin row, or focus it and press Enter, to make it the new target.';
+  let html = '<div class="table-title">' + heading + '</div>' +
+    '<div class="table-subtitle">' + note + '</div>' +
+    '<table class="neighbor-table"><thead><tr>' +
+    (recurrenceMode ? '<th>Object</th>' : '<th>Rank</th>') +
+    '<th>SN</th><th>Cosine Similarity</th><th>Cosine Distance</th>' +
+    '<th>RMSE</th><th>Common bins</th><th>z</th><th>Type</th><th>Date</th><th>Instrument</th><th>Source</th><th>Literature Phase (d)</th>' +
+    (recurrenceMode ? '<th>Days matched</th><th>Matched target date</th>' : '') +
     '</tr></thead><tbody>';
-  html += row(targetIdx, "target-row", '<span class="rank-pill target-pill">Target</span>', "0.000000", "0.000000", targetValid);
+  const orderedRow = (idx, rankHtml, sim, dist, rmse, nCommon, cls="", extra="") =>
+    '<tr class="' + cls + '" data-idx="' + idx + '" tabindex="0">' +
+    '<td>' + rankHtml + '</td>' + cell(DATA.sn[idx]) +
+    cell(sim,true) + cell(dist,true) + cell(rmse,true) + cell(nCommon,true) +
+    cell(fmtNum(DATA.z[idx],6),true) + cell(DATA.obj_type[idx] || "") +
+    cell(DATA.jd_str[idx] || dateAt(idx) || "") + cell(instAt(idx)) + cell(sourceAt(idx)) + literaturePhaseHtml(idx) +
+    extra + '</tr>';
+  if (!recurrenceMode) {
+    html += orderedRow(targetIdx, '<span class="rank-pill target-pill">Target</span>',
+      '1.000000', '0.000000', '0.000000', targetValid, 'target-row');
+  }
   if (!neighborList.length) {
-    html += '<tr><td colspan="12" class="muted">No neighbors to display with the current filters.</td></tr>';
+    html += '<tr><td colspan="' + (recurrenceMode ? 14 : 12) + '" class="muted">' +
+      (recurrenceMode ? 'No recurrent twins at these settings. Try a smaller minimum observing-date count or larger recurrence top-k.'
+                      : 'No neighbors to display with the current filters.') + '</td></tr>';
   } else {
-    neighborList.forEach((o, r) => {
-      const stats = rmseByIdx.get(o.j) || {rmse: null, nCommon: 0};
-      html += row(o.j, "", '<span class="rank-pill">' + (r + 1) + '</span>',
-        fmtNum(o.d, 6), fmtNum(stats.rmse, 6) || "NA", stats.nCommon);
+    neighborList.forEach((o,r) => {
+      const stats = rmseByIdx.get(o.j) || {rmse:null,nCommon:0};
+      const extra = recurrenceMode
+        ? cell(o.matchedDays + ' / ' + o.matchedTotal, true) +
+          cell(DATA.jd_str[o.matchedTargetIdx] || dateAt(o.matchedTargetIdx) || '')
+        : '';
+      html += orderedRow(o.j, recurrenceMode
+        ? (snKey(DATA.sn[o.j]) === REC_PAIR_SN ? '<strong>Selected</strong>' : '—')
+        : '<span class="rank-pill">'+(r+1)+'</span>',
+        fmtNum(1-o.d,6),fmtNum(o.d,6),fmtNum(stats.rmse,6)||'NA',stats.nCommon,'',extra);
     });
   }
   html += '</tbody></table>';
   el.innerHTML = html;
-
   el.querySelectorAll('tr[data-idx]').forEach(tr => {
-    const go = () => updateAll(parseInt(tr.dataset.idx));
-    tr.addEventListener('click', go);
-    tr.addEventListener('keydown', evt => { if (evt.key === "Enter") { evt.preventDefault(); go(); } });
+    const go=()=>updateAll(parseInt(tr.dataset.idx));
+    tr.addEventListener('click',go);
+    tr.addEventListener('keydown',evt=>{if(evt.key==='Enter'){evt.preventDefault();go();}});
   });
 }
 
@@ -501,7 +1128,8 @@ function populateObsDropdown(sn) {
 
 function latentLayout() {
   return {
-    title: "Full-latent space (UMAP) — colored by " + colorFieldLabel(CURRENT_COLOR_FIELD),
+    title: "Full-latent space (UMAP) — colored by " + colorFieldLabel(CURRENT_COLOR_FIELD) +
+        (literatureFilterActive() ? " | Literature Phase filter" : ""),
     autosize: true,
     margin: {l: 45, r: 10, t: 40, b: 115},
     xaxis: {title: "UMAP 1"},
@@ -560,7 +1188,7 @@ function toggleExpand(cardId) {
     const btn = card.querySelector(".expandBtn");
     if (btn) btn.textContent = "✕ Restore";
   }
-  setTimeout(() => resizePlots(["latent", "spec", "rmse"]), 60);
+  setTimeout(() => resizePlots(["latent", "spec", "rmse", "recurrencePairPlot"]), 60);
 }
 
 function setLayoutMode(mode) {
@@ -584,6 +1212,10 @@ function metaForDownload(i) {
     obs_date: dateAt(i),
     jd: DATA.jd[i],
     phase: DATA.phase[i],
+    literature_phase: literaturePhase(i),
+    literature_phase_source: literatureAt(i) ? literatureAt(i)[1] : null,
+    literature_phase_citation: literatureAt(i) ? literatureAt(i)[2] : null,
+    literature_phase_doi: literatureAt(i) ? literatureAt(i)[3] : null,
     z: DATA.z[i],
     umap: DATA.Y[i],
   };
@@ -699,7 +1331,9 @@ function prefetchSpectrum(i) {
 function twinLabel(prefix, j) {
   return prefix + " " + (DATA.sn[j] || "") +
     " | " + (DATA.jd_str[j] || DATA.obs_date[j] || "date NA") +
+    " | " + (instAt(j) || "instrument NA") +
     " | " + (DATA.obj_type[j] || "type NA") +
+    " | literature phase=" + (literaturePhase(j) === null ? "N/A" : fmtNum(literaturePhase(j), 2) + " d") +
     " | z=" + (fmtNum(DATA.z[j], 6) || "NA");
 }
 
@@ -716,17 +1350,49 @@ async function updateAll(i) {
   $("latentNVal").textContent = String(nLatent);
   $("specNVal").textContent = String(nSpec);
 
+  const recurrentKeys = renderRecurrence(i);
+  const onlyRecurrent = $("recurrentOnly").checked;
+  // The plots continue to compare the SELECTED observation against its actual
+  // nearest neighbors. The table switches to the across-epoch recurrence set.
   const nbrList = getNeighborList(i, excludeSameSN, uniqueTwinSN);
-  updateLatentHighlight(i, nbrList, nLatent);
-  const tableList = nbrList.slice(0, kShow);
-  const overlayList = nbrList.slice(0, clamp(nSpec, 1, nbrList.length));
+  const plotNeighbors = onlyRecurrent
+    ? nbrList.filter(o => recurrentKeys.has(snKey(DATA.sn[o.j])))
+    : nbrList;
+  updateLatentHighlight(i, plotNeighbors, nLatent);
+  // Show representative best match per
+  // recurrent object, even when it isn't a neighbor of the current observation.
+  const recurrenceRows = onlyRecurrent && CURRENT_RECURRENCE
+    ? CURRENT_RECURRENCE.shown.map(r => {
+        const selected = snKey(r.name) === REC_PAIR_SN;
+        const m = (selected && r.matches.find(x => recurrenceMatchId(x) === REC_PAIR_EPOCH)) || r.bestMatches[0];
+        return {j:m.twinIdx, d:m.distance, matchedTargetIdx:m.targetIdx,
+                matchedDays:r.nEpochs, matchedTotal:CURRENT_RECURRENCE.rec.totalEpochs};
+      })
+    : [];
+  // Put the selected recurrent twin at the top of the metadata table.
+  // Preserve the original order of all other recurrent twins.
+  const orderedRecurrenceRows = [...recurrenceRows].sort((a, b) => {
+    const aSelected = snKey(DATA.sn[a.j]) === REC_PAIR_SN;
+    const bSelected = snKey(DATA.sn[b.j]) === REC_PAIR_SN;
+    return Number(bSelected) - Number(aSelected);
+  });
+
+  const tableList = (
+    onlyRecurrent ? orderedRecurrenceRows : nbrList
+  ).slice(0, kShow);
+  const overlayList = plotNeighbors.slice(0, clamp(nSpec, 1, plotNeighbors.length));
 
   activeUpdateToken += 1;
   const myToken = activeUpdateToken;
   const statusEl = $("status");
   statusEl.textContent = "Loading target and twin spectra…";
 
-  const fetchIdx = [i, ...Array.from(new Set([...tableList, ...overlayList].map(o => o.j)))];
+  const fetchIdx = Array.from(new Set([
+    i,
+    ...tableList.map(o => o.j),
+    ...tableList.filter(o => o.matchedTargetIdx !== undefined).map(o => o.matchedTargetIdx),
+    ...overlayList.map(o => o.j)
+  ]));
   const results = await Promise.allSettled(fetchIdx.map(prefetchSpectrum));
   if (myToken !== activeUpdateToken) return;
 
@@ -742,7 +1408,13 @@ async function updateAll(i) {
   const rmseByIdx = new Map();
   tableList.forEach(o => {
     const td = dataByIdx.get(o.j);
-    if (td) rmseByIdx.set(o.j, computeSpectralRMSE(targetData, td));
+    if (td) {
+      // Recurrence matches can be from a different epoch. Compare the paired
+      // target spectrum, NOT the currently selected target observation.
+      const pairedTarget = o.matchedTargetIdx === undefined
+        ? targetData : dataByIdx.get(o.matchedTargetIdx);
+      if (pairedTarget) rmseByIdx.set(o.j, computeSpectralRMSE(pairedTarget, td));
+    }
   });
   const goodTwins = overlayList
     .map((o, rank) => ({j: o.j, distance: o.d, rank, data: dataByIdx.get(o.j), stats: rmseByIdx.get(o.j)}))
@@ -750,26 +1422,22 @@ async function updateAll(i) {
 
   const specData = [
     spectraTrace(targetData, twinLabel("target", i), null),
-    reconTrace(targetData, "target DAEP reconstruction"),
   ];
   goodTwins.forEach(({j, data, rank}) => {
     specData.push(spectraTrace(data, twinLabel("twin#" + (rank + 1), j), rank === 0 ? "dot" : "dash"));
   });
-  // Reconstructions start hidden; clicking a legend entry shows one.
-  goodTwins.forEach(({data, rank}) => {
-    specData.push(reconTrace(data, "twin#" + (rank + 1) + " DAEP reconstruction"));
-  });
+  // Only observed/processed spectra are plotted; reconstruction arrays remain in the bundle.
   Plotly.react("spec", specData, {
     title: "Spectra overlay (target + top twins)",
     autosize: true,
     margin: {l: 55, r: 15, t: 50, b: 150},
-    xaxis: {title: "Wavelength [Å]"},
+    xaxis: {title: daepWavelengthLabel()},
     yaxis: {title: "Normalized flux"},
     legend: {orientation: "h", x: 0, xanchor: "left", y: -0.35, yanchor: "top"}
   }, {responsive: true});
 
   renderRMSEPanel(i, goodTwins);
-  renderNeighborTable(i, tableList, rmseByIdx, targetData);
+  renderNeighborTable(i, tableList, rmseByIdx, targetData, onlyRecurrent);
 
   CURRENT_SELECTION = {
     // Typed arrays are kept as-is; the download converts them.
@@ -811,6 +1479,7 @@ function init() {
   TYPE_COLORS = buildGlobalTypeColorMap();
   TYPE_SYMBOLS = buildGlobalTypeSymbolMap();
   SN_TO_IDX = buildSnToIdx();
+  buildLiteratureRows();
   SORTED_SNS = uniqSorted(Object.keys(SN_TO_IDX));
 
   const colorBy = $("colorBy");
@@ -828,10 +1497,10 @@ function init() {
   const targetSel = $("targetSelect");
   const snSel = $("snSelect");
   const obsSel = $("obsSelect");
-  const layoutMode = $("layoutMode");
+  const modelMode = $("modelMode");
   const refresh = () => { if (obsSel.value) updateAll(obsSel.value); };
 
-  setLayoutMode(layoutMode.value);
+  setLayoutMode("2x2");
   document.querySelectorAll("#twins-app .expandBtn").forEach(btn => {
     btn.addEventListener("click", () => toggleExpand(btn.dataset.card));
   });
@@ -841,10 +1510,46 @@ function init() {
       if (card) toggleExpand(card.id);
     }
   });
-  layoutMode.addEventListener("change", () => setLayoutMode(layoutMode.value));
+  modelMode.addEventListener("change", () => {
+    // Reload from the server so each dataset gets its own validated bundle, cache ID,
+    // spectra file and in-memory Plotly/recurrence state. Never mix model rows.
+    const url = new URL(window.location.href);
+    url.searchParams.set("dataset", modelMode.value);
+    window.location.assign(url.toString());
+  });
   $("downloadSelected").addEventListener("click", downloadSelectedOutputs);
+  $("downloadRecurrence").addEventListener("click", exportUnifiedRecurrenceCSV);
+  $("recurrenceModeButton").addEventListener("click", () => {
+    const enabled = !$("recurrentOnly").checked;
+    $("recurrentOnly").checked = enabled;
+
+    const button = $("recurrenceModeButton");
+
+    button.textContent = enabled
+      ? "Return to nearest neighbors"
+      : "Update page to recurrent twins";
+
+    button.setAttribute("aria-pressed", String(enabled));
+
+    if ($("obsSelect").value) {
+      updateAll($("obsSelect").value);
+    }
+  });
+
+  $("recurrencePairEpoch").addEventListener("change", evt => {
+    selectRecurrenceMatch(evt.target.value);
+  });
+  $("recurrencePairPrev").addEventListener("click", () => stepRecurrenceMatch(-1));
+  $("recurrencePairNext").addEventListener("click", () => stepRecurrenceMatch(1));
+  ["recurrenceTopK", "recurrenceMinEpochs"].forEach(id =>
+    $(id).addEventListener("change", () => { if ($("obsSelect").value) updateAll($("obsSelect").value); })
+  );
   $("metricMode").addEventListener("change", () => {
-    if (CURRENT_METRIC_ENTRIES) renderRMSEPanel(CURRENT_METRIC_ENTRIES.targetIdx, CURRENT_METRIC_ENTRIES.twinEntries);
+    if ($('recurrentOnly').checked) {
+      renderSelectedRecurrencePairsTable();
+    } else if (CURRENT_METRIC_ENTRIES) {
+      renderRMSEPanel(CURRENT_METRIC_ENTRIES.targetIdx, CURRENT_METRIC_ENTRIES.twinEntries);
+    }
   });
 
   const snList = SORTED_SNS;
@@ -875,6 +1580,28 @@ function init() {
     refresh();
   });
   obsSel.addEventListener("change", refresh);
+  // Shared Literature Phase checkbox and handles; no model/UMAP regeneration.
+  const refreshLiterature = () => {
+    literatureReadout();
+    latentBaseTraces = buildBaseLatentTraces();
+    refresh();
+  };
+  $('filterLiteraturePhase').addEventListener('change', () => {
+    $('literaturePhaseControls').hidden = !literatureFilterActive();
+    refreshLiterature();
+  });
+  $('litPhaseShowMissing').addEventListener('change', refreshLiterature);
+  for (const id of ['litPhaseMin','litPhaseMax']) {
+    $(id).addEventListener('input', () => {
+      const lo = $('litPhaseMin'), hi = $('litPhaseMax');
+      if (Number(lo.value) > Number(hi.value)) {
+        if (id === 'litPhaseMin') hi.value = lo.value;
+        else lo.value = hi.value;
+      }
+      refreshLiterature();
+    });
+  }
+  literatureReadout();
   ["excludeSameSN", "uniqueTwinSN", "kInput"].forEach(id => $(id).addEventListener("change", refresh));
   // Dragging a slider fires many input events; render at most once per frame.
   let sliderFramePending = false;
@@ -922,6 +1649,21 @@ async function loadMetadata() {
   return JSON.parse(parts.join(""));
 }
 
+// The literature-phase catalog is optional: without it every phase cell reads
+// N/A, so any failure to load it yields an empty catalog rather than an error.
+// Aborting through the signal counts as a failure.
+async function loadLiteratureCatalog(signal) {
+  if (!CONFIG.literatureUrl) return {};
+  try {
+    const r = await fetch(CONFIG.literatureUrl, {signal});
+    if (!r.ok) return {};
+    const catalog = await r.json();
+    return catalog && typeof catalog === "object" && !Array.isArray(catalog) ? catalog : {};
+  } catch (e) {
+    return {};
+  }
+}
+
 function checkMetadata() {
   if (DATA.N !== CONFIG.N || DATA.W !== CONFIG.W || !Array.isArray(DATA.wave) || DATA.wave.length !== DATA.W) {
     throw new Error("the metadata does not match the bundle descriptor");
@@ -932,6 +1674,7 @@ function showLoadFailure(message) {
   $("loadingPanel").hidden = false;
   $("controls").hidden = true;
   $("dashboardGrid").hidden = true;
+  $("recurrenceSection").hidden = true;
   $("loadingText").textContent = message;
   $("loadingBar").parentElement.hidden = true;
 }
@@ -941,6 +1684,9 @@ async function boot() {
     showLoadFailure("The plotting library could not be loaded, so the explorer cannot start. Check that cdn.plot.ly is not blocked, then reload.");
     return;
   }
+  // Start the catalog download alongside the metadata so it adds no wait.
+  const catalogAbort = new AbortController();
+  const catalogLoad = loadLiteratureCatalog(catalogAbort.signal);
   try {
     DATA = await loadMetadata();
     checkMetadata();
@@ -948,9 +1694,15 @@ async function boot() {
     showLoadFailure("Could not load the spectral twins data (" + e.message + "). Try reloading the page.");
     return;
   }
+  // A catalog request that stalls must not hold the explorer once its data has
+  // loaded, so it gets a bounded wait from here and is then abandoned.
+  const catalogDeadline = setTimeout(() => catalogAbort.abort(), LITERATURE_CATALOG_WAIT_MS);
+  LITERATURE_CATALOG = await catalogLoad;
+  clearTimeout(catalogDeadline);
   $("loadingPanel").hidden = true;
   $("controls").hidden = false;
   $("dashboardGrid").hidden = false;
+  $("recurrenceSection").hidden = false;
   try {
     init();
   } catch (e) {
@@ -961,3 +1713,117 @@ async function boot() {
 boot();
 })();
 </script>
+
+
+<script>
+(function () {
+  function updateFrameNote() {
+    const select = [...document.querySelectorAll('select')].find(el =>
+      [...el.options].some(opt =>
+        /multi[\s-]*object/i.test(opt.textContent)
+      )
+    );
+
+    const isMulti = select &&
+      /multi[\s-]*object/i.test(
+        select.options[select.selectedIndex]?.textContent || ''
+      );
+
+    let note = document.getElementById('daep-frame-policy-note');
+
+    if (!isMulti) {
+      if (note) note.style.display = 'none';
+      return;
+    }
+
+    if (!note) {
+      const plot = [...document.querySelectorAll('.js-plotly-plot')].find(el => {
+        const title = el._fullLayout?.title?.text ||
+                      el.layout?.title?.text || '';
+        return /Spectra overlay/i.test(title);
+      });
+
+      if (!plot) return;
+
+      note = document.createElement('div');
+      note.id = 'daep-frame-policy-note';
+      note.style.cssText =
+        'margin:8px 14px 14px;padding:10px 12px;' +
+        'font-size:12px;line-height:1.55;color:#555;' +
+        'background:#f7f8fa;border-radius:5px;';
+
+      note.innerHTML =
+        '<strong>Wavelength-frame policy:</strong> ' +
+        'Extragalactic sources (SNe, TDEs, AGN, and galaxies) with ' +
+        'valid redshifts are shifted to their source rest frames. ' +
+        'Galactic sources (stars, novae, and CVs) retain their ' +
+        'original wavelength scales. Other or unclassified sources ' +
+        'are shifted when a valid redshift is available; otherwise, ' +
+        'their original wavelength scales are retained. ' +
+        'Comparisons may therefore involve different wavelength frames.';
+
+      plot.insertAdjacentElement('afterend', note);
+    }
+
+    note.style.display = 'block';
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    updateFrameNote();
+    setTimeout(updateFrameNote, 1500);
+    setTimeout(updateFrameNote, 4000);
+  });
+
+  document.addEventListener('change', function () {
+    setTimeout(updateFrameNote, 100);
+    setTimeout(updateFrameNote, 1200);
+  });
+})();
+</script>
+
+
+
+<style>
+
+/* Use a conventional scientific-interface font */
+#daepExplorer,
+#daepExplorer button,
+#daepExplorer input,
+#daepExplorer select,
+#daepExplorer textarea,
+#daepExplorer table,
+#daepExplorer .js-plotly-plot {
+    font-family: Arial, Helvetica, sans-serif !important;
+}
+
+/* Keep headings simple */
+#daepExplorer h1,
+#daepExplorer h2,
+#daepExplorer h3,
+#daepExplorer h4 {
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: normal !important;
+}
+
+/* Standard table typography */
+#daepExplorer th {
+    font-weight: 600 !important;
+}
+
+#daepExplorer td {
+    font-weight: 400 !important;
+}
+
+/* Remove overly stylized control typography */
+#daepExplorer button,
+#daepExplorer select {
+    font-weight: 400 !important;
+    letter-spacing: normal !important;
+}
+
+/* Plotly labels and annotations */
+#daepExplorer .js-plotly-plot text {
+    font-family: Arial, Helvetica, sans-serif !important;
+}
+</style>

@@ -15,6 +15,7 @@ from whitenoise.middleware import WhiteNoiseMiddleware
 
 from astrodash.config.logging import get_logger
 from astrodash.config.settings import get_settings
+from astrodash.infrastructure.explorer import daep_bundle
 
 logger = get_logger(__name__)
 
@@ -24,7 +25,7 @@ TWINS_BUNDLE_URL_PREFIX = "/astrodash/twins-data/"
 
 
 class StaticAndTwinsBundleMiddleware(WhiteNoiseMiddleware):
-    """WhiteNoise for static files, plus the DAEP twins bundle directory.
+    """WhiteNoise for static files, plus the DAEP twins bundles and catalog.
 
     The explorer lazy-loads each spectrum from a large file with an HTTP Range
     request and treats anything but a 206 as stale data. Django's
@@ -33,7 +34,11 @@ class StaticAndTwinsBundleMiddleware(WhiteNoiseMiddleware):
     with 206, sets ETags, and serves the prepared ``.gz`` copy of the metadata
     to clients that accept gzip.
 
-    Outside autorefresh mode WhiteNoise indexes the directory when the worker
+    Each dataset in ``daep_bundle.TWINS_DATASETS`` and the literature catalog
+    is served under its own prefix below ``TWINS_BUNDLE_URL_PREFIX``. A
+    directory that does not exist leaves its prefix answering 404.
+
+    Outside autorefresh mode WhiteNoise indexes the directories when the worker
     starts, so a bundle swap needs a pod restart, which a data release brings.
     """
 
@@ -42,15 +47,22 @@ class StaticAndTwinsBundleMiddleware(WhiteNoiseMiddleware):
         get_response: Callable[[HttpRequest], HttpResponse] | None = None,
         settings: Any = django_settings,
     ) -> None:
-        """Index static files, then the twins bundle directory.
+        """Index static files, then each twins dataset and the catalog.
 
         Args:
             get_response: The next handler in Django's middleware chain.
             settings: Django settings, as WhiteNoise expects.
         """
         super().__init__(get_response, settings=settings)
+        app_settings = get_settings()
+        for dataset in daep_bundle.TWINS_DATASETS:
+            self.add_files(
+                str(dataset.directory(app_settings)),
+                prefix=TWINS_BUNDLE_URL_PREFIX + dataset.url_suffix,
+            )
         self.add_files(
-            get_settings().daep_twins_bundle_dir, prefix=TWINS_BUNDLE_URL_PREFIX
+            app_settings.daep_twins_literature_dir,
+            prefix=TWINS_BUNDLE_URL_PREFIX + daep_bundle.LITERATURE_URL_SUFFIX,
         )
 
 

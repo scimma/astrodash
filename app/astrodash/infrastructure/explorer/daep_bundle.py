@@ -15,6 +15,7 @@ The bundle is split across two directories under ``{data_dir}/explorer/``:
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,60 @@ META_GZ_FILENAME = "data_meta.json.gz"
 SPECTRA_FILENAME = "data_spectra.bin"
 LATENTS_FILENAME = "reference_latents.npy"
 INDEX_FILENAME = "reference_index.npz"
+
+# The literature-phase catalog: observed phases from the literature, keyed by
+# object name and observation time, shared by every dataset. Optional; the
+# explorer shows no phases without it.
+LITERATURE_FILENAME = "literature_phases.json"
+LITERATURE_URL_SUFFIX = "literature/"
+
+
+@dataclass(frozen=True)
+class TwinsDataset:
+    """One DAEP dataset the explorer can show.
+
+    Attributes:
+        id: The value of the page's ``dataset`` query parameter.
+        label: The name shown in the dataset selector.
+        dir_setting: The settings field holding the bundle directory.
+        url_suffix: Where the bundle is served, relative to the bundle prefix.
+    """
+
+    id: str
+    label: str
+    dir_setting: str
+    url_suffix: str
+
+    def directory(self, settings: Any) -> Path:
+        """Return this dataset's bundle directory.
+
+        Args:
+            settings: The application settings.
+
+        Returns:
+            The configured directory, which may not exist.
+        """
+        return Path(getattr(settings, self.dir_setting))
+
+
+# The rest-frame dataset is the original bundle and keeps the bare prefix, so
+# its URLs and cache keys are unchanged.
+TWINS_DATASETS = (
+    TwinsDataset("rest_frame", "Rest-Frame DAEP", "daep_twins_bundle_dir", ""),
+    TwinsDataset(
+        "observer_frame",
+        "Observer-Frame DAEP",
+        "daep_twins_observer_frame_dir",
+        "observer_frame/",
+    ),
+    TwinsDataset(
+        "multi_object_rest",
+        "Multi-Object DAEP",
+        "daep_twins_multi_object_dir",
+        "multi_object_rest/",
+    ),
+)
+DEFAULT_TWINS_DATASET = TWINS_DATASETS[0]
 
 # Scalars the explorer reads from the metadata.
 REQUIRED_SCALAR_KEYS = (
