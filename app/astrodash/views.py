@@ -8,6 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 from asgiref.sync import async_to_sync
 from astrodash.config.logging import get_logger
+from astrodash.core.usage import events as usage_events
 from astrodash.core.exceptions import (
     AmbiguousDesignationException,
     AppException,
@@ -291,7 +292,25 @@ def process_spectrum(request):
             "model_type": classification.model_type,
             "model_id": model_id,
         }
-        return JsonResponse(payload)
+        response = JsonResponse(payload)
+        usage_events.record_classification(
+            request,
+            surface=usage_events.SURFACE_API,
+            model_type=classification.model_type,
+            model_id=model_id,
+            source=(
+                usage_events.SOURCE_UPLOAD
+                if uploaded_file
+                else usage_events.SOURCE_BY_NAME
+            ),
+            batch=False,
+            submitted=usage_events.api_parameter_fields(params),
+            designation=(
+                None if uploaded_file else getattr(spectrum, "object_designation", None)
+            ),
+            filename=getattr(uploaded_file, "name", None),
+        )
+        return response
 
     except AmbiguousDesignationException as exc:
         return JsonResponse(_ambiguous_designation_payload(exc), status=exc.status_code)
@@ -504,7 +523,22 @@ def batch_process(request):
             model_type,
             model_id,
         )
-        return JsonResponse(sanitize_for_json(results))
+        response = JsonResponse(sanitize_for_json(results))
+        submitted = usage_events.api_parameter_fields(params)
+        for filename, result in results.items():
+            if not isinstance(result, dict) or result.get("error"):
+                continue
+            usage_events.record_classification(
+                request,
+                surface=usage_events.SURFACE_API,
+                model_type=model_type,
+                model_id=model_id,
+                source=usage_events.SOURCE_UPLOAD,
+                batch=True,
+                submitted=submitted,
+                filename=filename,
+            )
+        return response
     except AppException as exc:
         return _json_error(exc.message, status=exc.status_code)
     except Exception as exc:

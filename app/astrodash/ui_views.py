@@ -29,6 +29,7 @@ from astrodash.infrastructure.ml.model_registry import (
     listed_definitions,
 )
 from astrodash.infrastructure.ml.leaderboard.page import build_leaderboard_context
+from astrodash.core.usage import events as usage_events
 from astrodash.core.model_access import (
     EntryLinkRefused,
     GateNotConfigured,
@@ -687,6 +688,30 @@ def _preserved_classify_fields(
     if params.get("zValue") is not None:
         fields.append(("redshift", params.get("zValue")))
     return fields
+
+
+def _submitted_classify_fields(form) -> dict:
+    """Return the classify form's values as submitted, keyed by event field.
+
+    The model is left out: it comes from the session, and the event records
+    the model that actually ran.
+
+    Args:
+        form: The bound, valid classify form.
+
+    Returns:
+        The submitted parameters under their usage-event field names.
+    """
+    data = form.cleaned_data
+    return {
+        "object_name": data.get("supernova_name"),
+        "smoothing": data.get("smoothing"),
+        "min_wave": data.get("min_wave"),
+        "max_wave": data.get("max_wave"),
+        "known_z": data.get("known_z"),
+        "redshift": data.get("redshift"),
+        "source_spectrum_id": data.get("source_spectrum_id"),
+    }
 
 
 def _format_retrieved_at(retrieved_at) -> str:
@@ -1527,6 +1552,29 @@ def classify(request):
                         ),
                     )
 
+                # Recorded last, once nothing on the success path can still
+                # fail, with the form values as submitted rather than the ones
+                # the lookup may have filled in.
+                usage_events.record_classification(
+                    request,
+                    surface=usage_events.SURFACE_UI,
+                    model_type=classification.model_type,
+                    model_id=selected_model_id,
+                    source=(
+                        usage_events.SOURCE_BY_NAME
+                        if by_name_lookup
+                        else usage_events.SOURCE_UPLOAD
+                    ),
+                    batch=False,
+                    submitted=_submitted_classify_fields(form),
+                    designation=(
+                        getattr(spectrum, "object_designation", None)
+                        if by_name_lookup
+                        else None
+                    ),
+                    filename=getattr(uploaded_file, "name", None),
+                )
+
             except AppException as e:
                 if not by_name_lookup:
                     messages.error(request, f"Processing Error: {e.message}")
@@ -1709,6 +1757,32 @@ def batch_process(request):
                     context['results'] = formatted_results
                     context['run_metadata'] = run_metadata
                     context['success'] = True
+
+                    # One event per spectrum that classified. The redshift box
+                    # here is free text (a value or name=value pairs), so it is
+                    # recorded under its own field, apart from the classify
+                    # form's numeric redshift.
+                    submitted = {
+                        'smoothing': form.cleaned_data['smoothing'],
+                        'min_wave': form.cleaned_data['min_wave'],
+                        'max_wave': form.cleaned_data['max_wave'],
+                        'known_z': form.cleaned_data['known_z'],
+                        'redshift_text': form.cleaned_data['redshift'],
+                        'calculate_rlap': form.cleaned_data['calculate_rlap'],
+                    }
+                    for filename, result in results.items():
+                        if not isinstance(result, dict) or result.get('error'):
+                            continue
+                        usage_events.record_classification(
+                            request,
+                            surface=usage_events.SURFACE_UI,
+                            model_type=model_type,
+                            model_id=selected_model_id,
+                            source=usage_events.SOURCE_UPLOAD,
+                            batch=True,
+                            submitted=submitted,
+                            filename=filename,
+                        )
 
                 except AppException as e:
                     logger.error("Batch UI processing failed with AppException: %s", e.message)

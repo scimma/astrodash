@@ -15,6 +15,7 @@ thread.
 """
 
 import functools
+import json
 import logging
 import threading
 from dataclasses import dataclass
@@ -124,3 +125,76 @@ def flush_request(**kwargs: Any) -> None:
             len(points),
             type(exc).__name__,
         )
+
+
+SOURCE_BY_NAME = "by_name"
+SOURCE_UPLOAD = "upload"
+
+# REST ``params`` keys and the event fields they are recorded under. The whole
+# object is also kept as one JSON string, so an unrecognized key is not lost.
+_API_PARAM_FIELDS = {
+    "objectName": "object_name",
+    "smoothing": "smoothing",
+    "minWave": "min_wave",
+    "maxWave": "max_wave",
+    "knownZ": "known_z",
+    "zValue": "redshift",
+    "calculateRlap": "calculate_rlap",
+}
+
+
+def api_parameter_fields(params: Mapping[str, Any]) -> dict:
+    """Turn a REST call's ``params`` object into event fields.
+
+    Args:
+        params: The parsed ``params`` JSON the caller submitted.
+
+    Returns:
+        Each recognized parameter under its field name, plus the whole object
+        as one JSON string.
+    """
+    fields = {
+        field: params[key] for key, field in _API_PARAM_FIELDS.items() if key in params
+    }
+    fields["params_json"] = json.dumps(params, sort_keys=True, default=str)
+    return fields
+
+
+def record_classification(
+    request: Any,
+    *,
+    surface: str,
+    model_type: str,
+    model_id: Optional[str],
+    source: str,
+    batch: bool,
+    submitted: Mapping[str, Any],
+    designation: Optional[str] = None,
+    filename: Optional[str] = None,
+) -> None:
+    """Record one successful classification.
+
+    Args:
+        request: The request that ran it.
+        surface: :data:`SURFACE_UI` or :data:`SURFACE_API`.
+        model_type: The model type that produced the result, as the factory
+            names it (``"user_uploaded"`` for an uploaded model).
+        model_id: The uploaded model's ID for an uploaded model; otherwise
+            ignored, and the built-in model's ID is the model type.
+        source: :data:`SOURCE_BY_NAME` or :data:`SOURCE_UPLOAD`.
+        batch: Whether the spectrum came as part of a batch.
+        submitted: The parameters as submitted, under their field names.
+            Never the uploaded file's contents.
+        designation: The designation a by-name lookup resolved to.
+        filename: The uploaded file's name.
+    """
+    fields = dict(submitted)
+    fields.update(
+        model_type=model_type,
+        model_id=model_id if model_type == "user_uploaded" and model_id else model_type,
+        source=source,
+        batch=batch,
+        designation=designation,
+        filename=filename,
+    )
+    record(request, EVENT_CLASSIFICATION, surface, fields)
