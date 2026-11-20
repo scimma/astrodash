@@ -25,6 +25,24 @@ def _announce_usage_recording(app_settings) -> None:
     logging.getLogger(USAGE_LOGGER_NAME).log(level, describe(state))
 
 
+def _connect_usage_flush() -> None:
+    """Buffer usage events per request and write them after the response.
+
+    The receivers cost next to nothing when a request recorded no event, and
+    the ``dispatch_uid`` keeps a repeated ``ready()`` from connecting twice.
+    """
+    from django.core.signals import request_finished, request_started
+
+    from astrodash.core.usage import events
+
+    request_started.connect(
+        events.start_request, dispatch_uid="astrodash.usage.start_request"
+    )
+    request_finished.connect(
+        events.flush_request, dispatch_uid="astrodash.usage.flush_request"
+    )
+
+
 class AstroDashConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "astrodash"
@@ -57,8 +75,10 @@ class AstroDashConfig(AppConfig):
         on a pod that already reported Ready. Constructing it once at startup
         turns that into a failed rollout.
 
-        It also logs whether usage recording is on. That check opens no
-        connection, so it is safe in init containers and management commands.
+        It also logs whether usage recording is on and connects the receivers
+        that write usage events after each response. Neither opens a
+        connection, so both are safe in init containers and management
+        commands.
 
         Raises:
             ValueError: If a model in the registry requires a credential while
@@ -80,6 +100,7 @@ class AstroDashConfig(AppConfig):
 
         app_settings = get_settings()
         _announce_usage_recording(app_settings)
+        _connect_usage_flush()
 
         model_registry.validate_gate_configuration(
             model_registry.MODELS, gate_configuration()
