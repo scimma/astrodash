@@ -1,10 +1,14 @@
 import logging
+from typing import TYPE_CHECKING
 
 from django.apps import AppConfig
 from django.conf import settings
 
+if TYPE_CHECKING:
+    from astrodash.config.settings import Settings
 
-def _announce_usage_recording(app_settings) -> None:
+
+def _announce_usage_recording(app_settings: "Settings") -> None:
     """Log one line saying whether usage recording is on, and why not if off.
 
     A partial configuration is a warning naming the variables to fix; an

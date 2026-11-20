@@ -1,6 +1,7 @@
 from django.shortcuts import render
 from django.contrib import messages
 from django.http import (
+    HttpRequest,
     HttpResponse,
     HttpResponseRedirect,
     FileResponse,
@@ -14,6 +15,7 @@ from django.urls import reverse
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Dict
 
 from astrodash.forms import (
     ClassifyForm,
@@ -280,7 +282,7 @@ MAX_SELECTION_NAME_LENGTH = ClassifyForm.base_fields["supernova_name"].max_lengt
 
 
 @require_POST
-def twins_selection(request):
+def twins_selection(request: HttpRequest) -> HttpResponse:
     """Record an object a visitor selected in the public twins explorer.
 
     The explorer page posts here from the handlers of the visitor's own
@@ -732,7 +734,7 @@ def _preserved_classify_fields(
     return fields
 
 
-def _submitted_classify_fields(form) -> dict:
+def _submitted_classify_fields(form: ClassifyForm) -> Dict[str, Any]:
     """Return the classify form's values as submitted, keyed by event field.
 
     The model is left out: it comes from the session, and the event records
