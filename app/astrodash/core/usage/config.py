@@ -14,10 +14,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from astrodash.config.settings import Settings, get_settings
-
-# Every usage log line goes to this logger, which Django LOGGING configures at
-# INFO. Modules under ``astrodash.infrastructure.usage`` use the same name.
-USAGE_LOGGER_NAME = "astrodash.usage"
+from astrodash.infrastructure.usage import USAGE_LOGGER_NAME  # noqa: F401
 
 URL_VAR = "ASTRODASH_USAGE_INFLUX_URL"
 DATABASE_VAR = "ASTRODASH_USAGE_INFLUX_DATABASE"
