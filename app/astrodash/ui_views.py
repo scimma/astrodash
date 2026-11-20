@@ -1,11 +1,13 @@
 from django.shortcuts import render
 from django.contrib import messages
 from django.http import (
+    HttpResponse,
     HttpResponseRedirect,
     FileResponse,
     Http404,
     JsonResponse,
 )
+from django.middleware.csrf import get_token
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 from django.urls import reverse
@@ -257,6 +259,10 @@ def spectral_twins(request):
         "N": descriptor["N"],
         "W": descriptor["W"],
         "metaBytes": descriptor["files"][daep_bundle.META_FILENAME],
+        # The page reports each object a visitor selects; see twins_selection.
+        "datasetId": selected.id,
+        "selectionReportUrl": reverse("astrodash:twins_selection"),
+        "csrfToken": get_token(request),
     }
     literature = (
         Path(config.daep_twins_literature_dir) / daep_bundle.LITERATURE_FILENAME
@@ -269,6 +275,41 @@ def spectral_twins(request):
         )
     context["twins_config"] = twins_config
     return render(request, "astrodash/explorer/spectral_twins.html", context)
+
+
+# Longest object name a selection report may carry, matching the classify
+# form's name field.
+MAX_SELECTION_NAME_LENGTH = 100
+
+
+@require_POST
+def twins_selection(request):
+    """Record an object a visitor selected in the public twins explorer.
+
+    The explorer page posts here from the handlers of the visitor's own
+    actions only, so the page's default object, a redraw and a prefetch are not
+    counted. The name is checked for shape only: the bundle's metadata is too
+    large to consult per report.
+
+    Args:
+        request: A POST carrying ``dataset`` and ``object``.
+
+    Returns:
+        204 when recorded, or 400 when the dataset is unknown or the name is
+        empty, too long or carries a control character.
+    """
+    dataset = request.POST.get("dataset", "")
+    name = request.POST.get("object", "").strip()
+    known = {item.id for item in daep_bundle.TWINS_DATASETS}
+    if (
+        dataset not in known
+        or not name
+        or len(name) > MAX_SELECTION_NAME_LENGTH
+        or not name.isprintable()
+    ):
+        return HttpResponse(status=400)
+    usage_events.record_twins_selection(request, dataset, name)
+    return HttpResponse(status=204)
 
 
 @xframe_options_sameorigin
@@ -339,7 +380,11 @@ def twins_search(request):
                 'wave': stored.get('x', []),
                 'flux': stored.get('y', []),
             }
-        return JsonResponse(data)
+        response = JsonResponse(data)
+        usage_events.record_twins_search(
+            request, request.session.get('classify_twins_designation')
+        )
+        return response
     except Exception as e:
         logger.exception("twins_search failed")
         return JsonResponse({'error': str(e)}, status=500)
@@ -1412,6 +1457,13 @@ def classify(request):
                     request.session['classify_dash_embedding'] = classification.results['embedding']
                 else:
                     request.session.pop('classify_dash_embedding', None)
+                # A later FIND TWINS search on this spectrum is recorded under
+                # the object it was looked up by; an upload names none.
+                twins_designation = getattr(spectrum, "object_designation", None)
+                if by_name_lookup and isinstance(twins_designation, str) and twins_designation:
+                    request.session['classify_twins_designation'] = twins_designation
+                else:
+                    request.session.pop('classify_twins_designation', None)
 
                 # Store in session for "Apply overlays" re-renders (so we don't re-run classification)
                 request.session['classify_processed'] = {

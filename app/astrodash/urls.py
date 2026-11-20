@@ -21,6 +21,9 @@ urlpatterns = [
     path("leaderboard/", ui_views.leaderboard, name="leaderboard"),
     path("team/", ui_views.team_members, name="team_members"),
     path("twins/", ui_views.spectral_twins, name="spectral_twins"),
+    path(
+        "twins/selection/", ui_views.twins_selection, name="twins_selection"
+    ),
     path("classify/twins/", ui_views.dash_twins, name="dash_twins"),
     path("classify/twins/data/", ui_views.dash_twins_data, name="dash_twins_data"),
     path("classify/twins/search/", ui_views.twins_search, name="twins_search"),

@@ -198,3 +198,31 @@ def record_classification(
         filename=filename,
     )
     record(request, EVENT_CLASSIFICATION, surface, fields)
+
+
+def record_twins_search(request: Any, designation: Optional[str]) -> None:
+    """Record one FIND TWINS search on a classified spectrum.
+
+    Args:
+        request: The request that ran the search.
+        designation: The designation of a spectrum classified by name, or
+            ``None`` for an uploaded spectrum, which is flagged instead.
+    """
+    fields = {"designation": designation} if designation else {"uploaded": True}
+    record(request, EVENT_TWINS_SEARCH, SURFACE_UI, fields)
+
+
+def record_twins_selection(request: Any, dataset: str, designation: str) -> None:
+    """Record one object a visitor selected in the public twins explorer.
+
+    Args:
+        request: The report request from the explorer page.
+        dataset: The explorer dataset the object was selected in.
+        designation: The selected object's name as the explorer shows it.
+    """
+    record(
+        request,
+        EVENT_TWINS_SELECTION,
+        SURFACE_UI,
+        {"dataset": dataset, "designation": designation},
+    )
