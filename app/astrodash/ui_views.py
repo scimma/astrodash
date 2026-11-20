@@ -1,17 +1,21 @@
 from django.shortcuts import render
 from django.contrib import messages
 from django.http import (
+    HttpRequest,
+    HttpResponse,
     HttpResponseRedirect,
     FileResponse,
     Http404,
     JsonResponse,
 )
+from django.middleware.csrf import get_token
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 from django.urls import reverse
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Dict
 
 from astrodash.forms import (
     ClassifyForm,
@@ -29,6 +33,7 @@ from astrodash.infrastructure.ml.model_registry import (
     listed_definitions,
 )
 from astrodash.infrastructure.ml.leaderboard.page import build_leaderboard_context
+from astrodash.core.usage import events as usage_events
 from astrodash.core.model_access import (
     EntryLinkRefused,
     GateNotConfigured,
@@ -256,6 +261,9 @@ def spectral_twins(request):
         "N": descriptor["N"],
         "W": descriptor["W"],
         "metaBytes": descriptor["files"][daep_bundle.META_FILENAME],
+        "datasetId": selected.id,
+        "selectionReportUrl": reverse("astrodash:twins_selection"),
+        "csrfToken": get_token(request),
     }
     literature = (
         Path(config.daep_twins_literature_dir) / daep_bundle.LITERATURE_FILENAME
@@ -268,6 +276,39 @@ def spectral_twins(request):
         )
     context["twins_config"] = twins_config
     return render(request, "astrodash/explorer/spectral_twins.html", context)
+
+
+MAX_SELECTION_NAME_LENGTH = ClassifyForm.base_fields["supernova_name"].max_length
+
+
+@require_POST
+def twins_selection(request: HttpRequest) -> HttpResponse:
+    """Record an object a visitor selected in the public twins explorer.
+
+    The explorer page posts here from the handlers of the visitor's own
+    actions only, so the page's default object, a redraw and a prefetch are not
+    counted. The name is checked for shape only: the bundle's metadata is too
+    large to consult per report.
+
+    Args:
+        request: A POST carrying ``dataset`` and ``object``.
+
+    Returns:
+        204 when recorded, or 400 when the dataset is unknown or the name is
+        empty, too long or carries a control character.
+    """
+    dataset = request.POST.get("dataset", "")
+    name = request.POST.get("object", "").strip()
+    known = {item.id for item in daep_bundle.TWINS_DATASETS}
+    if (
+        dataset not in known
+        or not name
+        or len(name) > MAX_SELECTION_NAME_LENGTH
+        or not name.isprintable()
+    ):
+        return HttpResponse(status=400)
+    usage_events.record_twins_selection(request, dataset, name)
+    return HttpResponse(status=204)
 
 
 @xframe_options_sameorigin
@@ -338,7 +379,11 @@ def twins_search(request):
                 'wave': stored.get('x', []),
                 'flux': stored.get('y', []),
             }
-        return JsonResponse(data)
+        response = JsonResponse(data)
+        usage_events.record_twins_search(
+            request, request.session.get('classify_twins_designation')
+        )
+        return response
     except Exception as e:
         logger.exception("twins_search failed")
         return JsonResponse({'error': str(e)}, status=500)
@@ -687,6 +732,30 @@ def _preserved_classify_fields(
     if params.get("zValue") is not None:
         fields.append(("redshift", params.get("zValue")))
     return fields
+
+
+def _submitted_classify_fields(form: ClassifyForm) -> Dict[str, Any]:
+    """Return the classify form's values as submitted, keyed by event field.
+
+    The model is left out: it comes from the session, and the event records
+    the model that actually ran.
+
+    Args:
+        form: The bound, valid classify form.
+
+    Returns:
+        The submitted parameters under their usage-event field names.
+    """
+    data = form.cleaned_data
+    return {
+        "object_name": data.get("supernova_name"),
+        "smoothing": data.get("smoothing"),
+        "min_wave": data.get("min_wave"),
+        "max_wave": data.get("max_wave"),
+        "known_z": data.get("known_z"),
+        "redshift": data.get("redshift"),
+        "source_spectrum_id": data.get("source_spectrum_id"),
+    }
 
 
 def _format_retrieved_at(retrieved_at) -> str:
@@ -1387,6 +1456,11 @@ def classify(request):
                     request.session['classify_dash_embedding'] = classification.results['embedding']
                 else:
                     request.session.pop('classify_dash_embedding', None)
+                twins_designation = getattr(spectrum, "object_designation", None)
+                if by_name_lookup and isinstance(twins_designation, str) and twins_designation:
+                    request.session['classify_twins_designation'] = twins_designation
+                else:
+                    request.session.pop('classify_twins_designation', None)
 
                 # Store in session for "Apply overlays" re-renders (so we don't re-run classification)
                 request.session['classify_processed'] = {
@@ -1526,6 +1600,29 @@ def classify(request):
                             {'supernova_name': supernova_name} if supernova_name else None
                         ),
                     )
+
+                # Recorded last, once nothing on the success path can still
+                # fail, with the form values as submitted rather than the ones
+                # the lookup may have filled in.
+                usage_events.record_classification(
+                    request,
+                    surface=usage_events.SURFACE_UI,
+                    model_type=classification.model_type,
+                    model_id=selected_model_id,
+                    source=(
+                        usage_events.SOURCE_BY_NAME
+                        if by_name_lookup
+                        else usage_events.SOURCE_UPLOAD
+                    ),
+                    batch=False,
+                    submitted=_submitted_classify_fields(form),
+                    designation=(
+                        getattr(spectrum, "object_designation", None)
+                        if by_name_lookup
+                        else None
+                    ),
+                    filename=getattr(uploaded_file, "name", None),
+                )
 
             except AppException as e:
                 if not by_name_lookup:
@@ -1709,6 +1806,25 @@ def batch_process(request):
                     context['results'] = formatted_results
                     context['run_metadata'] = run_metadata
                     context['success'] = True
+
+                    # The batch redshift box is free text, so it has its own
+                    # field apart from the classify form's numeric redshift.
+                    submitted = {
+                        'smoothing': form.cleaned_data['smoothing'],
+                        'min_wave': form.cleaned_data['min_wave'],
+                        'max_wave': form.cleaned_data['max_wave'],
+                        'known_z': form.cleaned_data['known_z'],
+                        'redshift_text': form.cleaned_data['redshift'],
+                        'calculate_rlap': form.cleaned_data['calculate_rlap'],
+                    }
+                    usage_events.record_batch_classifications(
+                        request,
+                        results,
+                        surface=usage_events.SURFACE_UI,
+                        model_type=model_type,
+                        model_id=selected_model_id,
+                        submitted=submitted,
+                    )
 
                 except AppException as e:
                     logger.error("Batch UI processing failed with AppException: %s", e.message)

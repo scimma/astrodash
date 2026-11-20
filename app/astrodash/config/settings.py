@@ -256,6 +256,27 @@ class Settings(BaseSettings):
     wiserep_refusal_cache_ttl_seconds: float = 120.0
     wiserep_resolution_wait_seconds: float = 150.0
 
+    # Usage recording (astrodash.core.usage)
+    # Recording is on only when the URL, database, username, password and
+    # environment tag are all set; see astrodash.core.usage.config. The
+    # credentials are plain optional strings so that no validator can fail and
+    # echo a value in its error. The certificate and key are optional, but must
+    # be configured together. Each write is bounded by the connect and read
+    # limits and is never retried; a failed write skips writes for the pause
+    # length. New visitor IDs are capped per worker process per hour.
+    usage_influx_url: Optional[str] = None
+    usage_influx_database: Optional[str] = None
+    usage_influx_username: Optional[str] = None
+    usage_influx_password: Optional[str] = None
+    usage_influx_retention_policy: Optional[str] = None
+    usage_influx_cert_path: Optional[str] = None
+    usage_influx_key_path: Optional[str] = None
+    usage_environment: Optional[str] = None
+    usage_connect_timeout: float = 2.0
+    usage_read_timeout: float = 3.0
+    usage_pause_seconds: float = 60.0
+    usage_visitor_id_cap_per_hour: int = 20
+
     # Logging
     log_dir: str = Field("logs")
     log_level: str = Field("INFO")

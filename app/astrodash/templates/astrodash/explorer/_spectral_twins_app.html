@@ -299,6 +299,31 @@ function literatureReadout() {
 
 
 function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+
+// Call this only from the handlers of a visitor's own actions: updateAll also
+// serves the default object shown on load and every redraw, and
+// prefetchSpectrum runs in the background, so neither may report.
+function reportSelection(sn) {
+  if (!CONFIG.selectionReportUrl || !sn) return;
+  try {
+    fetch(CONFIG.selectionReportUrl, {
+      method: "POST",
+      body: new URLSearchParams({dataset: CONFIG.datasetId, object: String(sn)}),
+      headers: {"X-CSRFToken": CONFIG.csrfToken},
+      credentials: "same-origin",
+      keepalive: true,
+    }).catch(() => {});
+  } catch (e) {}
+}
+function reportSelectionIdx(i) {
+  const idx = parseInt(i);
+  if (Number.isFinite(idx) && idx >= 0 && idx < DATA.N) reportSelection(DATA.sn[idx]);
+}
+function reportMatchedPair(id) {
+  const [targetIdx, twinIdx] = String(id).split(':');
+  reportSelectionIdx(targetIdx);
+  reportSelectionIdx(twinIdx);
+}
 function fmtNum(x, ndp) {
   if (x === null || x === undefined) return "";
   const v = Number(x);
@@ -563,6 +588,8 @@ function renderRecurrence(targetIdx) {
   const recurrentObjectSelect = box.querySelector('#recurrentObjectSelect');
   recurrentObjectSelect.addEventListener('change', () => {
     REC_PAIR_SN = recurrentObjectSelect.value;
+    const chosen = shown.find(r => snKey(r.name) === REC_PAIR_SN);
+    reportSelection(chosen ? chosen.name : REC_PAIR_SN);
     REC_PAIR_EPOCH = null;
     renderRecurrence(targetIdx);
     // If already in recurrence metadata mode, keep its selected-pair row in sync.
@@ -633,6 +660,7 @@ function stepRecurrenceMatch(delta) {
   const next = sel.selectedIndex + delta;
   if (next < 0 || next >= sel.options.length) return;
   selectRecurrenceMatch(sel.options[next].value);
+  reportMatchedPair(sel.options[next].value);
 }
 
 function populateRecurrenceEpochs() {
@@ -1007,6 +1035,7 @@ async function renderSelectedRecurrencePairsTable() {
   el.querySelectorAll('tr[data-epoch]').forEach(tr => {
     const selectDate = () => {
       selectRecurrenceMatch(tr.dataset.epoch);
+      reportMatchedPair(tr.dataset.epoch);
     };
     tr.addEventListener('click',selectDate);
     tr.addEventListener('keydown',ev => {
@@ -1093,7 +1122,7 @@ function renderNeighborTable(targetIdx, neighborList, rmseByIdx, targetData, rec
   html += '</tbody></table>';
   el.innerHTML = html;
   el.querySelectorAll('tr[data-idx]').forEach(tr => {
-    const go=()=>updateAll(parseInt(tr.dataset.idx));
+    const go=()=>{reportSelectionIdx(tr.dataset.idx);updateAll(parseInt(tr.dataset.idx));};
     tr.addEventListener('click',go);
     tr.addEventListener('keydown',evt=>{if(evt.key==='Enter'){evt.preventDefault();go();}});
   });
@@ -1145,7 +1174,7 @@ function initLatentPlot() {
   $("latent").on("plotly_click", evt => {
     if (evt && evt.points.length > 0) {
       const idx = evt.points[0].customdata;
-      if (idx !== undefined && idx !== null) updateAll(idx);
+      if (idx !== undefined && idx !== null) { reportSelectionIdx(idx); updateAll(idx); }
     }
   });
 }
@@ -1538,6 +1567,7 @@ function init() {
 
   $("recurrencePairEpoch").addEventListener("change", evt => {
     selectRecurrenceMatch(evt.target.value);
+    reportMatchedPair(evt.target.value);
   });
   $("recurrencePairPrev").addEventListener("click", () => stepRecurrenceMatch(-1));
   $("recurrencePairNext").addEventListener("click", () => stepRecurrenceMatch(1));
@@ -1562,24 +1592,30 @@ function init() {
     populateObsDropdown(snSel.value);
   }
 
-  $("targetSearchButton").addEventListener("click", () => runTargetSearch(true));
+  const searchAndReport = () => {
+    runTargetSearch(true);
+    if (obsSel.value !== "") reportSelection(targetSel.value);
+  };
+  $("targetSearchButton").addEventListener("click", searchAndReport);
   $("targetSearch").addEventListener("keydown", evt => {
-    if (evt.key === "Enter") { evt.preventDefault(); runTargetSearch(true); }
+    if (evt.key === "Enter") { evt.preventDefault(); searchAndReport(); }
   });
   targetSel.addEventListener("change", () => {
     if (targetSel.value) {
+      reportSelection(targetSel.value);
       snSel.value = targetSel.value;
       populateObsDropdown(targetSel.value);
       refresh();
     }
   });
   snSel.addEventListener("change", () => {
+    reportSelection(snSel.value);
     ensureTargetOption(snSel.value);
     targetSel.value = snSel.value;
     populateObsDropdown(snSel.value);
     refresh();
   });
-  obsSel.addEventListener("change", refresh);
+  obsSel.addEventListener("change", () => { reportSelectionIdx(obsSel.value); refresh(); });
   // Shared Literature Phase checkbox and handles; no model/UMAP regeneration.
   const refreshLiterature = () => {
     literatureReadout();

@@ -264,6 +264,13 @@ LOGGING = {
             'handlers': ['console'],
             'level': 'INFO'
         },
+        # Usage recording reports its state at startup and each dropped write.
+        # No root logger is configured, so without this its INFO lines are lost.
+        'astrodash.usage': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     }
 }
 
