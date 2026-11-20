@@ -165,7 +165,17 @@ class UiClassifyEventTests(ClassifyEventTestCase):
             self.post_classify(by_name_spectrum(), classify_post("dash"))
             self.assertEqual(len(writer.lines), 1)
             self.client.get(reverse("astrodash:classify"))
-            self.client.get(reverse("astrodash:classify"), {"overlay_elements": "H"})
+            # The overlay path reads the line list from the data mount, which
+            # CI does not have; the lines themselves do not matter here.
+            line_list = MagicMock()
+            line_list.filter_wavelengths_by_range.return_value = {"H": [6563.0]}
+            line_list.get_available_elements.return_value = ["H"]
+            with patch(
+                "astrodash.ui_views.get_line_list_service", return_value=line_list
+            ):
+                self.client.get(
+                    reverse("astrodash:classify"), {"overlay_elements": "H"}
+                )
         self.assertEqual(len(writer.lines), 1)
 
     def test_failed_write_still_renders_the_result_and_warns(self):
