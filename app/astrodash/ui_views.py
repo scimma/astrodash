@@ -259,7 +259,6 @@ def spectral_twins(request):
         "N": descriptor["N"],
         "W": descriptor["W"],
         "metaBytes": descriptor["files"][daep_bundle.META_FILENAME],
-        # The page reports each object a visitor selects; see twins_selection.
         "datasetId": selected.id,
         "selectionReportUrl": reverse("astrodash:twins_selection"),
         "csrfToken": get_token(request),
@@ -277,9 +276,7 @@ def spectral_twins(request):
     return render(request, "astrodash/explorer/spectral_twins.html", context)
 
 
-# Longest object name a selection report may carry, matching the classify
-# form's name field.
-MAX_SELECTION_NAME_LENGTH = 100
+MAX_SELECTION_NAME_LENGTH = ClassifyForm.base_fields["supernova_name"].max_length
 
 
 @require_POST
@@ -1457,8 +1454,6 @@ def classify(request):
                     request.session['classify_dash_embedding'] = classification.results['embedding']
                 else:
                     request.session.pop('classify_dash_embedding', None)
-                # A later FIND TWINS search on this spectrum is recorded under
-                # the object it was looked up by; an upload names none.
                 twins_designation = getattr(spectrum, "object_designation", None)
                 if by_name_lookup and isinstance(twins_designation, str) and twins_designation:
                     request.session['classify_twins_designation'] = twins_designation
@@ -1810,10 +1805,8 @@ def batch_process(request):
                     context['run_metadata'] = run_metadata
                     context['success'] = True
 
-                    # One event per spectrum that classified. The redshift box
-                    # here is free text (a value or name=value pairs), so it is
-                    # recorded under its own field, apart from the classify
-                    # form's numeric redshift.
+                    # The batch redshift box is free text, so it has its own
+                    # field apart from the classify form's numeric redshift.
                     submitted = {
                         'smoothing': form.cleaned_data['smoothing'],
                         'min_wave': form.cleaned_data['min_wave'],
@@ -1822,19 +1815,14 @@ def batch_process(request):
                         'redshift_text': form.cleaned_data['redshift'],
                         'calculate_rlap': form.cleaned_data['calculate_rlap'],
                     }
-                    for filename, result in results.items():
-                        if not isinstance(result, dict) or result.get('error'):
-                            continue
-                        usage_events.record_classification(
-                            request,
-                            surface=usage_events.SURFACE_UI,
-                            model_type=model_type,
-                            model_id=selected_model_id,
-                            source=usage_events.SOURCE_UPLOAD,
-                            batch=True,
-                            submitted=submitted,
-                            filename=filename,
-                        )
+                    usage_events.record_batch_classifications(
+                        request,
+                        results,
+                        surface=usage_events.SURFACE_UI,
+                        model_type=model_type,
+                        model_id=selected_model_id,
+                        submitted=submitted,
+                    )
 
                 except AppException as e:
                     logger.error("Batch UI processing failed with AppException: %s", e.message)

@@ -524,20 +524,14 @@ def batch_process(request):
             model_id,
         )
         response = JsonResponse(sanitize_for_json(results))
-        submitted = usage_events.api_parameter_fields(params)
-        for filename, result in results.items():
-            if not isinstance(result, dict) or result.get("error"):
-                continue
-            usage_events.record_classification(
-                request,
-                surface=usage_events.SURFACE_API,
-                model_type=model_type,
-                model_id=model_id,
-                source=usage_events.SOURCE_UPLOAD,
-                batch=True,
-                submitted=submitted,
-                filename=filename,
-            )
+        usage_events.record_batch_classifications(
+            request,
+            results,
+            surface=usage_events.SURFACE_API,
+            model_type=model_type,
+            model_id=model_id,
+            submitted=usage_events.api_parameter_fields(params),
+        )
         return response
     except AppException as exc:
         return _json_error(exc.message, status=exc.status_code)

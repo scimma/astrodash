@@ -39,6 +39,9 @@ EVENT_TWINS_SEARCH = "twins_search"
 SURFACE_UI = "ui"
 SURFACE_API = "api"
 
+SOURCE_BY_NAME = "by_name"
+SOURCE_UPLOAD = "upload"
+
 _buffer = threading.local()
 
 
@@ -127,9 +130,6 @@ def flush_request(**kwargs: Any) -> None:
         )
 
 
-SOURCE_BY_NAME = "by_name"
-SOURCE_UPLOAD = "upload"
-
 # REST ``params`` keys and the event fields they are recorded under. The whole
 # object is also kept as one JSON string, so an unrecognized key is not lost.
 _API_PARAM_FIELDS = {
@@ -198,6 +198,41 @@ def record_classification(
         filename=filename,
     )
     record(request, EVENT_CLASSIFICATION, surface, fields)
+
+
+def record_batch_classifications(
+    request: Any,
+    results: Mapping[str, Any],
+    *,
+    surface: str,
+    model_type: str,
+    model_id: Optional[str],
+    submitted: Mapping[str, Any],
+) -> None:
+    """Record one event per spectrum of a batch that classified.
+
+    Args:
+        request: The request that ran the batch.
+        results: The batch service's results, keyed by filename; an entry
+            that is not a mapping or that carries an ``error`` is skipped.
+        surface: :data:`SURFACE_UI` or :data:`SURFACE_API`.
+        model_type: The model type the batch ran.
+        model_id: The uploaded model's ID, for an uploaded model.
+        submitted: The batch's submitted parameters, under their field names.
+    """
+    for filename, result in results.items():
+        if not isinstance(result, Mapping) or result.get("error"):
+            continue
+        record_classification(
+            request,
+            surface=surface,
+            model_type=model_type,
+            model_id=model_id,
+            source=SOURCE_UPLOAD,
+            batch=True,
+            submitted=submitted,
+            filename=filename,
+        )
 
 
 def record_twins_search(request: Any, designation: Optional[str]) -> None:
