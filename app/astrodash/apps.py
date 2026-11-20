@@ -1,5 +1,28 @@
+import logging
+
 from django.apps import AppConfig
 from django.conf import settings
+
+
+def _announce_usage_recording(app_settings) -> None:
+    """Log one line saying whether usage recording is on, and why not if off.
+
+    A partial configuration is a warning naming the variables to fix; an
+    entirely unset configuration, as in local development and CI, is
+    informational. Neither line carries a configured value.
+
+    Args:
+        app_settings: The loaded ``astrodash.config.settings.Settings``.
+    """
+    from astrodash.core.usage.config import (
+        USAGE_LOGGER_NAME,
+        describe,
+        recording_state,
+    )
+
+    state = recording_state(app_settings)
+    level = logging.WARNING if state.misconfigured else logging.INFO
+    logging.getLogger(USAGE_LOGGER_NAME).log(level, describe(state))
 
 
 class AstroDashConfig(AppConfig):
@@ -34,6 +57,9 @@ class AstroDashConfig(AppConfig):
         on a pod that already reported Ready. Constructing it once at startup
         turns that into a failed rollout.
 
+        It also logs whether usage recording is on. That check opens no
+        connection, so it is safe in init containers and management commands.
+
         Raises:
             ValueError: If a model in the registry requires a credential while
                 any part of the gate configuration is unset, blank, or left at
@@ -52,7 +78,8 @@ class AstroDashConfig(AppConfig):
             "AstroDash starting with APP_VERSION=%s", settings.APP_VERSION
         )
 
-        get_settings()
+        app_settings = get_settings()
+        _announce_usage_recording(app_settings)
 
         model_registry.validate_gate_configuration(
             model_registry.MODELS, gate_configuration()
