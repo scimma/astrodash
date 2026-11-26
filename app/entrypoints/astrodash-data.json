@@ -24,18 +24,6 @@
     "size": 233418240
   },
   {
-    "path": "explorer/daep_literature/literature_phases.json",
-    "version_id": "QwFoMi0I5O9E7AYYCUJllL1I4r1vYZh",
-    "etag": "3544d413f0bc85fa5c95337523a1e8da",
-    "size": 1339176
-  },
-  {
-    "path": "explorer/daep_literature/literature_phases.json.gz",
-    "version_id": "wdqmLUMJCtaBw4Q5nSTCrGmAr-Xj09e",
-    "etag": "bed05178bfc354a21098e489bc97fe1b",
-    "size": 59994
-  },
-  {
     "path": "explorer/daep_multi_object/bundle.json",
     "version_id": "ZBhw-4BGmdeHFckSSao53q6idvBYtkW",
     "etag": "f16eca56ac1ff0b6a5be3fc557aa33f5",

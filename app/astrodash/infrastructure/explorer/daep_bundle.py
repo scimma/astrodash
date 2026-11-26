@@ -75,16 +75,16 @@ class TwinsDataset:
 # The rest-frame dataset is the original bundle and keeps the bare prefix, so
 # its URLs and cache keys are unchanged.
 TWINS_DATASETS = (
-    TwinsDataset("rest_frame", "Rest-Frame DAEP", "daep_twins_bundle_dir", ""),
+    TwinsDataset("rest_frame", "Rest-Frame", "daep_twins_bundle_dir", ""),
     TwinsDataset(
         "observer_frame",
-        "Observer-Frame DAEP",
+        "Observer-Frame",
         "daep_twins_observer_frame_dir",
         "observer_frame/",
     ),
     TwinsDataset(
         "multi_object_rest",
-        "Multi-Object DAEP",
+        "Multi-Object",
         "daep_twins_multi_object_dir",
         "multi_object_rest/",
     ),

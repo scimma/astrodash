@@ -118,7 +118,7 @@ class TwinsDatasetServingTests(SimpleTestCase):
         self.rest_dir = self._bundle(root / "daep", SPECTRA)
         self.observer_dir = self._bundle(root / "daep_observer_frame", SPECTRA[::-1])
         self.multi_dir = self._bundle(root / "daep_multi_object", SPECTRA[:512])
-        self.literature_dir = root / "daep_literature"
+        self.literature_dir = root / "phase_literature"
         self.literature_dir.mkdir()
         (self.literature_dir / "literature_phases.json").write_bytes(CATALOG)
         (self.literature_dir / "literature_phases.json.gz").write_bytes(

@@ -1,0 +1,6 @@
+services:
+  app:
+    volumes:
+      - ${DAEP_REST_DIR:?Set DAEP_REST_DIR}:/mnt/daep-models/rest:ro
+      - ${DAEP_OBSERVER_DIR:?Set DAEP_OBSERVER_DIR}:/mnt/daep-models/observer:ro
+      - ${DAEP_MULTI_DIR:?Set DAEP_MULTI_DIR}:/mnt/daep-models/multi:ro

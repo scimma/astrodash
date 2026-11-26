@@ -257,15 +257,10 @@ def spectral_twins(request):
         "W": descriptor["W"],
         "metaBytes": descriptor["files"][daep_bundle.META_FILENAME],
     }
-    literature = (
-        Path(config.daep_twins_literature_dir) / daep_bundle.LITERATURE_FILENAME
+    from django.urls import reverse
+    twins_config["literatureUrl"] = reverse(
+        "astrodash:twins_reviewed_literature"
     )
-    if literature.is_file():
-        twins_config["literatureUrl"] = (
-            TWINS_BUNDLE_URL_PREFIX
-            + daep_bundle.LITERATURE_URL_SUFFIX
-            + daep_bundle.LITERATURE_FILENAME
-        )
     context["twins_config"] = twins_config
     return render(request, "astrodash/explorer/spectral_twins.html", context)
 
@@ -1992,3 +1987,75 @@ def _format_results(results):
     # them to builtins; views.py already does the same before serializing the
     # REST response.
     return sanitize_for_json({'best_matches': formatted_matches})
+
+
+# BEGIN TRANSIENT DAEP SPECTRUM UPLOAD ENDPOINTS
+@require_POST
+def twins_upload_preflight(request):
+    """Read each file (including ZIP members) and return per-file metadata preview."""
+    from astrodash.upload_preflight import MAX_TOTAL_BYTES
+    from astrodash.daep_upload_runtime import preview
+    files=request.FILES.getlist('spectra')
+    if not files or len(files)>30 or sum(f.size for f in files)>MAX_TOTAL_BYTES:
+        return JsonResponse({'error':'Select up to 30 files, maximum 256 MB'},status=413)
+    try:
+        rows=preview([(f.name,f.read()) for f in files])
+    except (ValueError,RuntimeError,FileNotFoundError,ImportError) as exc:
+        return JsonResponse({'error':str(exc)[:600]},status=422)
+    return JsonResponse({'results':rows})
+
+@require_POST
+def twins_upload_match(request):
+    """Run per-file DAEP inference without persisting uploaded data."""
+    import json
+    from astrodash.upload_preflight import MAX_TOTAL_BYTES
+    from astrodash.daep_upload_runtime import run_uploads
+    files=request.FILES.getlist('spectra')
+    if not files or len(files)>30 or sum(f.size for f in files)>MAX_TOTAL_BYTES:
+        return JsonResponse({'error':'Select up to 30 files, maximum 256 MB'},status=413)
+    try:
+        overrides=json.loads(request.POST.get('metadata_overrides','{}'))
+        if not isinstance(overrides,dict) or len(overrides)>250:
+            raise ValueError('Invalid per-file metadata')
+        rows=run_uploads([(f.name,f.read()) for f in files],
+                         mode=request.POST.get('dataset','rest_frame'),overrides=overrides)
+    except (ValueError,KeyError,RuntimeError,ImportError,FileNotFoundError) as exc:
+        return JsonResponse({'error':str(exc)[:600]},status=422)
+    return JsonResponse({'results':rows,'matched':sum(r['status']=='matched' for r in rows)})
+# END TRANSIENT DAEP SPECTRUM UPLOAD ENDPOINTS
+
+
+def twins_reviewed_literature(request):
+    """Read the verified six-field reviewed phase catalog, bypassing stale bundle URLs."""
+    import json as _json
+    from collections import Counter as _Counter
+    from django.http import HttpResponse as _HttpResponse
+    path = (
+        Path(__file__).resolve().parent
+        / "data"
+        / "phase_literature"
+        / daep_bundle.LITERATURE_FILENAME
+    )
+    if not path.is_file():
+        return JsonResponse({'error': 'Reviewed literature catalog not installed'}, status=503)
+    raw = path.read_bytes()
+    try:
+        data = _json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "Reviewed literature catalog is invalid JSON"},
+            status=503,
+        )
+    if (
+        not isinstance(data, dict)
+        or not data
+        or any(not isinstance(row, list) or len(row) != 6
+               for row in data.values())
+    ):
+        return JsonResponse(
+            {"error": "Reviewed literature catalog schema mismatch"},
+            status=503,
+        )
+    response = _HttpResponse(raw, content_type='application/json')
+    response['Cache-Control']='no-store, no-cache, must-revalidate'
+    return response

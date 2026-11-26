@@ -19,7 +19,7 @@ missing or have changed.
 |----------|---------------|------------|-------------|
 | Pre-trained models | `init/data/pre_trained_models/` | `/mnt/astrodash-data/pre_trained_models/` | PyTorch models for the DASH, 1D CNN, and latent classifiers, plus the retired Transformer's weights (kept so results it produced still render) |
 | Spectra | `init/data/spectra/` | `/mnt/astrodash-data/spectra/` | JSON spectrum example files |
-| Explorer | `init/data/explorer/` | `/mnt/astrodash-data/explorer/` | Spectral twins embeddings, PCA, and UMAP data; the DAEP twins bundles under `daep/`, `daep_observer_frame/` and `daep_multi_object/`, and the literature-phase catalog under `daep_literature/` (see [Publishing a DAEP spectral twins bundle](#publishing-a-daep-spectral-twins-bundle)) |
+| Explorer | `init/data/explorer/` | `/mnt/astrodash-data/explorer/` | Spectral twins embeddings, PCA, and UMAP data; the DAEP twins bundles under `daep/`, `daep_observer_frame/` and `daep_multi_object/`, and the literature-phase catalog under `phase_literature/` (see [Publishing a DAEP spectral twins bundle](#publishing-a-daep-spectral-twins-bundle)) |
 | User models | `init/data/user_models/` | `/mnt/astrodash-data/user_models/` | User-uploaded trained models |
 
 ### S3 bucket configuration
@@ -373,7 +373,7 @@ it, which browsers that accept gzip receive instead:
 ```bash
 gzip -9 -n -k literature_phases.json
 mc cp literature_phases.json literature_phases.json.gz \
-  js-blast/astrodash/init/data/explorer/daep_literature/
+  js-blast/astrodash/init/data/explorer/phase_literature/
 ```
 
 The catalog is installed like any other data file, so an update also follows
